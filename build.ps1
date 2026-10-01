@@ -1,5 +1,5 @@
-param([switch]$SkipTests)
-$releaseVersion = '0.3.1'
+param([switch]$SkipTests, [switch]$SkipLocalCopy)
+$releaseVersion = '0.4.0'
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
@@ -10,13 +10,15 @@ try {
     dotnet publish src/Glide.App/Glide.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/native --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
     $releaseFolder = Join-Path $PSScriptRoot 'dist/Glide'
-    New-Item -ItemType Directory -Force $releaseFolder | Out-Null
-    Copy-Item -LiteralPath artifacts/native/Glide.exe -Destination $releaseFolder -Force
-    # Never overwrite a user's configured INI during a rebuild.
-    if (-not (Test-Path -LiteralPath (Join-Path $releaseFolder 'Glide.ini'))) {
-        Copy-Item -LiteralPath Glide.ini -Destination $releaseFolder
+    if (-not $SkipLocalCopy) {
+        New-Item -ItemType Directory -Force $releaseFolder | Out-Null
+        Copy-Item -LiteralPath artifacts/native/Glide.exe -Destination $releaseFolder -Force
+        # Never overwrite a user's configured INI during a rebuild.
+        if (-not (Test-Path -LiteralPath (Join-Path $releaseFolder 'Glide.ini'))) {
+            Copy-Item -LiteralPath Glide.ini -Destination $releaseFolder
+        }
+        Copy-Item -LiteralPath README.md,Allow-PrivateNetwork.ps1 -Destination $releaseFolder -Force
     }
-    Copy-Item -LiteralPath README.md,Allow-PrivateNetwork.ps1 -Destination $releaseFolder -Force
     if (-not $SkipTests) {
         $nativeTest = Start-Process -FilePath (Join-Path $PSScriptRoot 'artifacts/native/Glide.exe') `
             -ArgumentList '--self-test' -WindowStyle Hidden -PassThru -Wait
@@ -30,7 +32,7 @@ try {
     $zipPath = "dist/Glide-$releaseVersion-win-x64.zip"
     Compress-Archive -LiteralPath $packageFiles -DestinationPath $zipPath -Force
     $zipChecksum = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant() + "  Glide-$releaseVersion-win-x64.zip"
-    $exeChecksum = (Get-FileHash -LiteralPath (Join-Path $releaseFolder 'Glide.exe') -Algorithm SHA256).Hash.ToLowerInvariant() + '  Glide.exe'
+    $exeChecksum = (Get-FileHash -LiteralPath artifacts/native/Glide.exe -Algorithm SHA256).Hash.ToLowerInvariant() + '  Glide.exe'
     Set-Content -LiteralPath "dist/SHA256SUMS-$releaseVersion.txt" -Value @($zipChecksum, $exeChecksum) -Encoding ascii
-    Get-Item dist/Glide/Glide.exe,$zipPath | Select-Object FullName,Length
+    Get-Item artifacts/native/Glide.exe,$zipPath | Select-Object FullName,Length
 } finally { Pop-Location }

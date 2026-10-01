@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.3.1** adds the compact desk/session layout. This is preview software; the latest pairing changes still need two-PC testing.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.4.0** fixes keypad Num Lock forwarding and reduces encrypted transport overhead during input bursts. This is preview software; the latest changes still need two-PC testing.
 
-**[Download Glide v0.3.1 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.3.1/Glide-0.3.1-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.3.1)
+**[Download Glide v0.4.0 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.4.0/Glide-0.4.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.4.0)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -58,6 +58,7 @@ Manual pairing codes remain private credentials: anyone with the code and networ
 - A dedicated message-loop thread handles Windows hooks. It queues input; it never waits for a network write.
 - UI polling repaints only when displayed state changes. Buffered window painting and unchanged-control checks avoid the previous half-second refresh flicker.
 - Adjacent queued absolute mouse positions collapse into the latest position. Key/button transitions remain ordered barriers, so a click cannot overtake its position.
+- A preallocated queue sends up to 32 already-queued events in one TLS write. There is no batching timer or wait to fill a batch. This reduces allocation and encryption/write overhead during bursts; TLS authentication, encryption, event order, and the 256-event queue limit remain in place.
 - A bounded queue fails the session rather than dropping a key-up or button-up. A silent-peer watchdog disconnects after approximately 1.6–2 seconds and releases tracked remote input.
 - The client reconnects in the background after ordinary connection failures. Pause and emergency stop disable reconnecting until you press Start again.
 
@@ -75,6 +76,8 @@ These changes target plausible causes of handoff lag. They cannot eliminate Wi-F
 
 ## Build and verify
 
+Version **0.4.0** preserves the controlling keyboard's interpretation of keypad digits/decimal and navigation even when the receiver has a different Num Lock state. Num Lock presses also update the controlling keyboard's state and light during remote control. Update both executables for the complete fix. Cursor parking behavior is unchanged.
+
 Build prerequisites: .NET 10 SDK, Visual Studio C++ Build Tools, and a Windows SDK. These are **only needed to build**, not to run the supplied native executable. There are no third-party application packages.
 
 ```powershell
@@ -83,8 +86,11 @@ Build prerequisites: .NET 10 SDK, Visual Studio C++ Build Tools, and a Windows S
 
 This runs the protocol/security tests, publishes NativeAOT, runs the native smoke test, and creates `dist/Glide` plus a ZIP with fresh settings. It never packages a user's saved credentials. Debug symbols stay in `artifacts/native`.
 
+Use `.\build.ps1 -SkipLocalCopy` to build, test, and package a release while `dist/Glide/Glide.exe` is running; the running app and its settings are left in place.
+
 ```powershell
 dotnet run --project tests/Glide.Tests -c Release
+dotnet run --project tests/Glide.Tests -c Release -- --benchmark
 .\dist\Glide\Glide.exe --self-test
 .\dist\Glide\Glide.exe --preview C:\temp\glide-preview.bmp
 .\dist\Glide\Glide.exe --profile C:\temp\glide-idle.txt
@@ -92,11 +98,13 @@ dotnet run --project tests/Glide.Tests -c Release
 
 Self-test writes results under `self-test` beside the executable and checks Win32 structures, Unicode titles/text, INI/DPAPI round-tripping, NativeAOT TLS echo, discovery, one-sided verified pairing, awaited role transitions, hook startup/emergency handling/teardown. It does not inject remote keystrokes. Preview uses sample data without loading saved credentials, networking, or saving settings. Add `--preview-connected`, `--preview-nearby`, `--preview-manual`, `--preview-paused`, or `--preview-reconnecting` for those states. `--receiver-preview` selects the receiving role; `--preview-confirm` shows incoming pairing, with `--preview-outgoing` for the initiating screen. Use `--preview-left`, `--preview-long-name`, `--preview-error`, or `--preview-scale 1.5` for layout checks. `--preview-interactive` keeps the sample window open until Quit; Start does not connect. Profile measures six seconds of standby with networking disabled, reports repaint/refresh counts, and exits. Neither mode is a two-PC benchmark.
 
+The optional `--benchmark` runs synthetic encrypted loopback traffic without input injection or saved credentials. It reports sequential and 64-event burst RTT distributions, TLS write counts, process CPU, and allocations. These are same-PC transport measurements, not Wi-Fi or end-to-end cursor latency. Native self-test also checks keypad INPUT construction and Windows character translation with synthetic Num Lock states; actual remote typing still requires the pass below.
+
 ### Two-PC acceptance pass
 
 1. Open both apps, verify discovery, initiate pairing on one PC and verify the code there only. Leave the receiving PC untouched and check that both connect. Reject a request once on the initiator. Reopen both apps and verify automatic reconnect; pause and restart to verify it stays paused. Change a PC's IP and verify it reconnects with its saved identity. Reverse Control/Receive roles without copying credentials.
 2. Make 50 crossings in both directions. Observe the first few movements after each crossing and the RTT readout, first on Ethernet and then on your usual network.
-3. Type mixed case and shortcuts in a disposable text document; test click, double-click, scroll, and dragging within the receiving PC.
+3. Type mixed case and shortcuts in a disposable text document; test click, double-click, scroll, and dragging within the receiving PC. Start with opposite Num Lock states on the PCs: check keypad 0–9 and decimal with the controller's Num Lock on, then keypad navigation with it off. Toggle Num Lock while remote and check the controlling keyboard's light, Shift+keypad, dedicated arrows/Home/End/Delete, and keypad Enter/operators. Hold a keypad key across a Num Lock/Shift change, then release it and return locally; check that no key stays held or gets swallowed.
 4. Hold a key on the remote PC, disconnect its network, and verify local control returns and the receiver releases held input. Test Ctrl+Alt+F12 on both PCs.
 5. Test sleep/wake, pause/resume, display changes, differing display scales, and reconnect after closing/reopening the receiving app.
 

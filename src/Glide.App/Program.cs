@@ -81,7 +81,7 @@ internal sealed partial class MainWindow : IDisposable
         var wc = new WindowClass { Size = (uint)Marshal.SizeOf<WindowClass>(), Proc = proc,
             Instance = GetModuleHandle(null), Cursor = LoadCursor(0, 32512), Icon = icon, Name = "Glide.Main" };
         if (RegisterClassEx(ref wc) == 0) throw new InvalidOperationException("Could not register the app window.");
-        window = CreateWindowEx(0, wc.Name, "Glide  |  PORTABLE / v0.3.1", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
+        window = CreateWindowEx(0, wc.Name, "Glide  |  PORTABLE / v0.4.0", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
         if (window == 0) throw new InvalidOperationException("Could not create the app window.");
         SynchronizationContext.SetSynchronizationContext(new WindowContext(this));
         FitWindow(GetDpiForWindow(window) / 96.0);

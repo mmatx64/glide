@@ -15,6 +15,8 @@ internal static class NativeTests
             if (Marshal.SizeOf<Native.Input>() != 40) throw new Exception("x64 INPUT layout is wrong.");
             if (Marshal.SizeOf<Native.MouseHook>() != 32 || Marshal.SizeOf<Native.KeyHook>() != 24) throw new Exception("Hook layout is wrong.");
             lines.Add("PASS Win32 x64 input structures");
+            KeypadTest();
+            lines.Add("PASS keypad digits/decimal/navigation, key-up flags, and Windows translation with either Num Lock state (no input injected)");
             WindowTextTest();
             lines.Add("PASS Unicode window title and edit text round-trip");
             string path = System.IO.Path.Combine(directory, "test.ini");
@@ -53,6 +55,68 @@ internal static class NativeTests
             lines.Add("FAIL " + ex); File.WriteAllLines(System.IO.Path.Combine(directory, "results.txt"), lines); return 1;
         }
     }
+    private static void KeypadTest()
+    {
+        if (InputWorker.KeyIdentity(0x61, 0x4f, 0) != InputWorker.KeyIdentity(0x23, 0x4f, 2)
+            || InputWorker.KeyIdentity(0x23, 0x4f, 0) == InputWorker.KeyIdentity(0x23, 0x4f, 1)
+            || InputWorker.KeyIdentity(0x4f, 0, 0) == InputWorker.KeyIdentity(0x61, 0x4f, 0))
+            throw new Exception("Key identity cannot track keypad release after Num Lock/Shift changes.");
+        // Exercise the actual INPUT builder, then Windows character translation
+        // with synthetic keyboard states. Do not type into the user's desktop.
+        int[] scans = [0x52, 0x4f, 0x50, 0x51, 0x4b, 0x4c, 0x4d, 0x47, 0x48, 0x49, 0x53];
+        int[] navigation = [0x2d, 0x23, 0x28, 0x22, 0x25, 0x0c, 0x27, 0x24, 0x26, 0x21, 0x2e];
+        var layout = GetKeyboardLayout(0);
+        for (int i = 0; i < scans.Length; i++)
+        {
+            int digit = i < 10 ? 0x60 + i : 0x6e;
+            foreach (int vk in new[] { digit, navigation[i] })
+            {
+                foreach (int flags in new[] { 0, 2 })
+                {
+                    var input = InputWorker.BuildKeyInput(new Packet(MessageKind.Key, vk, scans[i], flags));
+                    var key = input.Data.Keyboard;
+                    if (input.Type != 1 || key.Vk != vk || key.Scan != scans[i] || key.Flags != flags || key.Extra == 0)
+                        throw new Exception("Keypad meaning or key-up was lost during injection preparation.");
+                }
+                string? previous = null;
+                foreach (byte numLock in new byte[] { 0, 1 })
+                {
+                    var state = new byte[256]; state[0x90] = numLock;
+                    var text = new System.Text.StringBuilder(8);
+                    var key = InputWorker.BuildKeyInput(new Packet(MessageKind.Key, vk, scans[i])).Data.Keyboard;
+                    int count = ToUnicodeEx(key.Vk, key.Scan, state, text, text.Capacity, 4, layout);
+                    string result = count > 0 ? text.ToString(0, count) : "";
+                    if (vk == digit && (count <= 0 || (i < 10 && result != i.ToString(System.Globalization.CultureInfo.InvariantCulture))))
+                        throw new Exception("Keypad number did not translate to a digit.");
+                    if (vk != digit && count != 0) throw new Exception("Keypad navigation unexpectedly produced text.");
+                    if (previous is not null && result != previous) throw new Exception("Keypad translation depends on receiver Num Lock.");
+                    previous = result;
+                }
+            }
+        }
+        // Dedicated navigation, keypad operators/Enter, letters and right-hand
+        // modifiers must retain physical scan-code forwarding and extended flags.
+        foreach (var packet in new[] {
+            new Packet(MessageKind.Key, 0x23, 0x4f, 1), new Packet(MessageKind.Key, 0x2e, 0x53, 1),
+            new Packet(MessageKind.Key, 0x6b, 0x4e), new Packet(MessageKind.Key, 0x6d, 0x4a),
+            new Packet(MessageKind.Key, 0x6a, 0x37), new Packet(MessageKind.Key, 0x6f, 0x35, 1),
+            new Packet(MessageKind.Key, 0x0d, 0x1c, 1), new Packet(MessageKind.Key, 0x41, 0x1e),
+            new Packet(MessageKind.Key, 0xa3, 0x1d, 1), new Packet(MessageKind.Key, 0x90, 0x45, 1) })
+        {
+            foreach (int up in new[] { 0, 2 })
+            {
+                var key = InputWorker.BuildKeyInput(packet with { C = packet.C | up }).Data.Keyboard;
+                if (key.Vk != 0 || key.Scan != packet.B || key.Flags != (uint)(packet.C | up | 8))
+                    throw new Exception("Non-keypad scan-code forwarding changed.");
+            }
+        }
+        var fallback = InputWorker.BuildKeyInput(new Packet(MessageKind.Key, 0xaf, 0, 2)).Data.Keyboard;
+        if (fallback.Vk != 0xaf || fallback.Scan != 0 || fallback.Flags != 2)
+            throw new Exception("Scanless virtual-key fallback changed.");
+    }
+    [DllImport("user32.dll")] private static extern nint GetKeyboardLayout(uint threadId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int ToUnicodeEx(
+        uint vk, uint scan, byte[] state, System.Text.StringBuilder text, int count, uint flags, nint layout);
     private static void WindowTextTest()
     {
         Native.WindowProc proc = Native.DefWindowProc;

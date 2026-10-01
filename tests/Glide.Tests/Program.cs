@@ -5,6 +5,8 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using Glide.Core;
 
+if (args.Contains("--benchmark")) { await TransportBenchmark.Run(); return; }
+
 int passed = 0;
 void Check(bool condition, string name) { if (!condition) throw new Exception(name); Console.WriteLine("PASS " + name); passed++; }
 async Task Reject(Func<Task> action, string name)
@@ -15,6 +17,7 @@ async Task Reject(Func<Task> action, string name)
 }
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(35));
 var ct = deadline.Token;
+await OutboxBatchTests.Run(Check, ct);
 var original = new Packet(MessageKind.Key, 0x41, 30, 3, 123456789012);
 var bytes = new byte[Packet.Size]; original.Write(bytes);
 Check(Packet.Read(bytes) == original, "binary protocol round-trip");
@@ -76,6 +79,21 @@ var ordered = samples.Order().ToArray();
 Console.WriteLine($"MEASURE loopback encrypted RTT: median={ordered[125]:F3} ms, p95={ordered[237]:F3} ms, p99={ordered[247]:F3} ms (not two-PC latency)");
 await Task.Delay(500, ct);
 Check(client.RoundTripMs > 0, "idle heartbeat keeps channel warm and measures RTT");
+echoes.Clear();
+for (int burst = 0; burst < 5; burst++)
+{
+    var expected = Enumerable.Range(0, 96).Select(i => (i % 4) switch
+    {
+        0 => new Packet(MessageKind.Move, i, burst, Stamp: Stopwatch.GetTimestamp()),
+        1 => new Packet(MessageKind.Key, 65, 30, Stamp: Stopwatch.GetTimestamp()),
+        2 => new Packet(MessageKind.Key, 65, 30, 2, Stopwatch.GetTimestamp()),
+        _ => new Packet(MessageKind.Button, 4, Stamp: Stopwatch.GetTimestamp())
+    }).ToArray();
+    foreach (var packet in expected) CheckSilent(client.Send(packet));
+    foreach (var _ in expected) await arrived.WaitAsync(ct);
+    CheckSilent(echoes.ToArray().SequenceEqual(expected)); echoes.Clear();
+}
+Check(true, "batched TLS preserves 480 mixed movement/key/button events in exact order");
 server.Dispose(); await Ignore(serverRun); await Ignore(clientRun);
 Check(!client.IsAlive, "disconnect stops session");
 server.Finish(); client.Finish();

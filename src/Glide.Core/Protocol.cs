@@ -29,20 +29,26 @@ public readonly record struct Packet(MessageKind Kind, int A = 0, int B = 0, int
 // Only adjacent motion is replaceable: clicks and key transitions are ordering barriers.
 public sealed class Outbox : IDisposable
 {
-    private readonly LinkedList<Packet> queue = new();
+    private readonly Packet[] queue;
     private readonly SemaphoreSlim ready = new(0, 1);
-    private readonly int capacity;
-    public long Coalesced { get; private set; }
-    public Outbox(int capacity = 256) => this.capacity = capacity;
+    private int head, count;
+    private long coalesced;
+    public long Coalesced => Interlocked.Read(ref coalesced);
+    public Outbox(int capacity = 256)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
+        queue = new Packet[capacity];
+    }
     public bool TryAdd(Packet packet)
     {
         lock (queue)
         {
-            if (packet.Kind == MessageKind.Move && queue.Last?.Value.Kind == MessageKind.Move)
-            { queue.Last.Value = packet; Coalesced++; return true; }
-            if (queue.Count >= capacity) return false;
-            bool wake = queue.Count == 0;
-            queue.AddLast(packet);
+            int tail = (head + count - 1 + queue.Length) % queue.Length;
+            if (packet.Kind == MessageKind.Move && count != 0 && queue[tail].Kind == MessageKind.Move)
+            { queue[tail] = packet; Interlocked.Increment(ref coalesced); return true; }
+            if (count >= queue.Length) return false;
+            bool wake = count == 0;
+            queue[(head + count) % queue.Length] = packet; count++;
             if (wake) ready.Release();
             return true;
         }
@@ -52,11 +58,30 @@ public sealed class Outbox : IDisposable
         await ready.WaitAsync(cancellation).ConfigureAwait(false);
         lock (queue)
         {
-            var packet = queue.First!.Value;
-            queue.RemoveFirst();
-            if (queue.Count > 0) ready.Release();
+            var packet = RemoveFirst();
+            if (count > 0) ready.Release();
             return packet;
         }
+    }
+    // Drain only events that are already queued. Never wait to fill a batch:
+    // isolated input still wakes the writer immediately, in its original order.
+    public async ValueTask<int> TakeBatchAsync(Memory<Packet> destination, CancellationToken cancellation)
+    {
+        if (destination.IsEmpty) throw new ArgumentException("A batch needs at least one slot.", nameof(destination));
+        await ready.WaitAsync(cancellation).ConfigureAwait(false);
+        lock (queue)
+        {
+            int length = Math.Min(destination.Length, count);
+            for (int i = 0; i < length; i++) destination.Span[i] = RemoveFirst();
+            if (count > 0) ready.Release();
+            return length;
+        }
+    }
+    private Packet RemoveFirst()
+    {
+        var packet = queue[head];
+        head = (head + 1) % queue.Length; count--;
+        return packet;
     }
     public void Dispose() => ready.Dispose();
 }

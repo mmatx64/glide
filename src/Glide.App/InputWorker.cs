@@ -12,7 +12,7 @@ internal sealed class InputWorker : IDisposable
     private readonly ConcurrentQueue<Action> commands = new();
     private readonly ConcurrentQueue<(Connection Peer, Packet Packet)> inbound = new();
     private readonly HookProc mouseProc, keyProc;
-    private readonly bool[] physical = new bool[256], suppressed = new bool[256];
+    private readonly bool[] physical = new bool[256], suppressed = new bool[768];
     private readonly Dictionary<int, Packet> heldKeys = new();
     private readonly Dictionary<int, Packet> heldButtons = new();
     private uint threadId;
@@ -157,17 +157,21 @@ internal sealed class InputWorker : IDisposable
             var data = Marshal.PtrToStructure<KeyHook>(lParam);
             if ((data.Flags & 0x10) != 0 || data.Vk >= 256) return CallNextHookEx(0, code, wParam, lParam);
             int vk = (int)data.Vk;
+            int keyId = KeyIdentity(vk, (int)data.Scan, (int)data.Flags);
             bool up = (data.Flags & 0x80) != 0;
             physical[vk] = !up;
             if (!up && vk == 0x7b && (physical[0xa2] || physical[0xa3] || physical[0x11]) && (physical[0xa4] || physical[0xa5] || physical[0x12]))
-            { suppressed[vk] = true; Panic(); return 1; }
+            { suppressed[keyId] = true; Panic(); return 1; }
             if (controller && remote && connection is { IsAlive: true })
             {
-                suppressed[vk] = !up;
+                // Keep the source Num Lock state (and keyboard LED) authoritative.
+                // Otherwise Windows keeps reporting the old keypad meaning here.
+                bool localNumLock = vk == 0x90;
+                suppressed[keyId] = !up && !localNumLock;
                 connection.Send(new Packet(MessageKind.Key, vk, (int)data.Scan, ((data.Flags & 1) != 0 ? 1 : 0) | (up ? 2 : 0)));
-                return 1;
+                return localNumLock ? CallNextHookEx(0, code, wParam, lParam) : 1;
             }
-            if (suppressed[vk]) { if (up) suppressed[vk] = false; return 1; }
+            if (suppressed[keyId]) { if (up) suppressed[keyId] = false; return 1; }
         }
         catch { connection?.Dispose(); remote = false; }
         return CallNextHookEx(0, code, wParam, lParam);
@@ -216,8 +220,12 @@ internal sealed class InputWorker : IDisposable
             case MessageKind.Move: Move(packet.A, packet.B); break;
             case MessageKind.Key:
                 if (packet.A is < 1 or > 255 || packet.B is < 0 or > 255 || packet.C is < 0 or > 3) throw new InvalidDataException("Invalid key.");
+                // Num Lock/Shift can change the reported VK while a keypad key is
+                // held. Release the key we actually pressed, using physical identity.
+                int keyId = KeyIdentity(packet.A, packet.B, packet.C);
+                if (heldKeys.TryGetValue(keyId, out var pressed)) packet = packet with { A = pressed.A };
                 InjectKey(packet, true);
-                if ((packet.C & 2) != 0) heldKeys.Remove(packet.A); else heldKeys[packet.A] = packet;
+                if ((packet.C & 2) != 0) heldKeys.Remove(keyId); else heldKeys[keyId] = packet;
                 break;
             case MessageKind.Button:
                 if (packet.A is not (2 or 4 or 8 or 16 or 32 or 64 or 128 or 256 or 2048 or 4096)) throw new InvalidDataException("Invalid mouse button.");
@@ -238,9 +246,21 @@ internal sealed class InputWorker : IDisposable
     }
     private static void InjectKey(Packet packet, bool required)
     {
-        var input = new Input { Type = 1, Data = new InputUnion { Keyboard = new KeyboardInput
-        { Vk = packet.B == 0 ? (ushort)packet.A : (ushort)0, Scan = (ushort)packet.B, Flags = (uint)packet.C | (packet.B == 0 ? 0u : 8u), Extra = Tag } } };
-        Inject(input, required);
+        Inject(BuildKeyInput(packet), required);
+    }
+    internal static int KeyIdentity(int vk, int scan, int flags) =>
+        scan == 0 ? 0x200 | vk : (scan & 0xff) | ((flags & 1) << 8);
+    internal static Input BuildKeyInput(Packet packet)
+    {
+        // Non-extended keypad digits/decimal share scan codes with navigation.
+        // Preserve the source's resolved VK so the receiver's Num Lock state
+        // cannot reinterpret a digit as End/Down/Delete (or the reverse).
+        bool keypad = (packet.C & 1) == 0 && packet.B is
+            (>= 0x47 and <= 0x49) or (>= 0x4b and <= 0x4d) or (>= 0x4f and <= 0x53);
+        bool scanCode = packet.B != 0 && !keypad;
+        return new Input { Type = 1, Data = new InputUnion { Keyboard = new KeyboardInput
+        { Vk = scanCode ? (ushort)0 : (ushort)packet.A, Scan = (ushort)packet.B,
+            Flags = (uint)packet.C | (scanCode ? 8u : 0u), Extra = Tag } } };
     }
     private static void InjectMouse(int flags, int data, bool required)
     {

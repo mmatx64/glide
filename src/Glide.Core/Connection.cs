@@ -14,13 +14,14 @@ public sealed class Connection : IDisposable
     private readonly Outbox outbox = new();
     private readonly CancellationTokenSource lifetime = new();
     private long lastReceived = Stopwatch.GetTimestamp();
-    private long sent, received;
+    private long sent, received, writeOperations;
     private int stopped;
     public int RemoteWidth { get; }
     public int RemoteHeight { get; }
     public double RoundTripMs { get; private set; }
     public long Sent => Interlocked.Read(ref sent);
     public long Received => Interlocked.Read(ref received);
+    public long WriteOperations => Interlocked.Read(ref writeOperations);
     public long Coalesced => outbox.Coalesced;
     public bool IsAlive => Volatile.Read(ref stopped) == 0;
     public event Action<Packet>? Input;
@@ -122,13 +123,17 @@ public sealed class Connection : IDisposable
     }
     private async Task WriteLoop(CancellationToken ct)
     {
-        var bytes = new byte[Packet.Size];
+        // One bounded TLS write for an existing burst, with no batching timer.
+        // 32 packets = 1 KiB of plaintext; leave the rest available for coalescing.
+        var packets = new Packet[32];
+        var bytes = new byte[Packet.Size * packets.Length];
         while (!ct.IsCancellationRequested)
         {
-            var packet = await outbox.TakeAsync(ct).ConfigureAwait(false);
-            packet.Write(bytes);
-            await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
-            Interlocked.Increment(ref sent);
+            int count = await outbox.TakeBatchAsync(packets, ct).ConfigureAwait(false);
+            for (int i = 0; i < count; i++) packets[i].Write(bytes.AsSpan(i * Packet.Size, Packet.Size));
+            await stream.WriteAsync(bytes.AsMemory(0, count * Packet.Size), ct).ConfigureAwait(false);
+            Interlocked.Increment(ref writeOperations);
+            Interlocked.Add(ref sent, count);
         }
     }
     private async Task Heartbeat(CancellationToken ct)
