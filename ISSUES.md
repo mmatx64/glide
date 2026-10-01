@@ -2,7 +2,7 @@
 
 ## BUG-002: Receiving PC stops responding while its screensaver runs
 
-Open; **v0.6.3 did not resolve the reported case. v0.6.4 corrects built-in saver discovery and desktop lookup**, awaiting two-PC acceptance. Reported October 1, 2026. The receiving PC's screensaver ignores remote input while Glide still shows Connected; dismissing it with its own mouse restores Glide without sign-in or restarting. The controlling PC has not been tested for this report.
+User reports **v0.6.4 appears to resolve the receiving-PC case**; v0.6.3 did not. Reported October 1, 2026. The receiving PC's screensaver ignored remote input while Glide still showed Connected; dismissing it locally restored Glide without sign-in or restarting. Broader acceptance and the controller-side case remain untested.
 
 Glide now checks for a running non-password screensaver when authenticated receiver activation, movement, keyboard, buttons or wheel input arrives. On the active normal desktop it posts `WM_CLOSE` only to the standard `WindowsScreenSaverClass` window. Checks/retries are limited to once per 250 ms; posting does not wait for the saver. Idle connections, Release, inactive receiver input, stale sessions and controller-side incoming input do not trigger wake requests. No Windows screensaver settings are changed. Secure desktops/password-protected savers remain local-control cases, and custom window classes are not explicitly targeted.
 
@@ -29,3 +29,7 @@ Acceptance: fast bursts and reversals respond promptly without a growing playbac
 Implemented in v0.6.0: Check for updates, public stable-release lookup, administrator helper, verified download, portable/service replacement, settings preservation, service restart, and rollback. See [README](README.md#click-to-update) and [validation](VALIDATION.md).
 
 v0.6.0 uses the regular GitHub release channel: the earlier latest-release 404 was caused by every existing release being marked as a prerelease. Live UAC/SCM acceptance remains outstanding; automated validation covers verified downloads, mocked service failures, and a real Windows process-job lifetime test.
+
+## FEAT-002: Reboot/sign-out sign-in and lock/unlock control
+
+Implemented in v0.7.0 with one-time `Install-Service.ps1 -EnableLoginControl` opt-in on the paired receiving service PC. Automatic LocalSystem startup launches a fixed headless receiver on physical-console Winlogon before sign-in or while the enrolled account is locked, then returns to the elevated user app after unlock. Existing pinned TLS pairing is preserved in an administrator/SYSTEM-only machine-DPAPI enrollment; no Windows login password is stored. Pause, Controller role and pairing reset revoke enrollment. See README for setup, scope and diagnostic validation. Actual two-PC PIN/password input, sign-out, reboot and unlock acceptance remains outstanding.

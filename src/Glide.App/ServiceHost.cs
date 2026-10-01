@@ -7,8 +7,9 @@ using static Glide.ServiceNative;
 
 namespace Glide;
 
-// LocalSystem is only a launcher. No network listener, credentials, input packets,
-// client-supplied command lines, or SYSTEM desktop UI exist in this process.
+// The service remains a fixed-path launcher. Optional sign-in control uses a
+// separate SYSTEM receiver with no UI, limited to the physical console Winlogon
+// desktop; the normal UI remains an elevated process of the enrolled user.
 internal static class ServiceHost
 {
     internal const string Name = "GlideSessionService";
@@ -25,10 +26,12 @@ internal static class ServiceHost
     private static Status status;
     private static string lastLog = "";
     private static bool diagnostic;
+    private static bool loginDiagnostic;
 
-    internal static int Run(bool test = false)
+    internal static int Run(bool test = false, bool loginTest = false)
     {
         diagnostic = test;
+        loginDiagnostic = loginTest;
         using var identity = WindowsIdentity.GetCurrent();
         if (!identity.IsSystem) return 5;
         return StartServiceCtrlDispatcher([new ServiceEntry { Name = Name, Main = main }, new ServiceEntry()]) ? 0 : Marshal.GetLastWin32Error();
@@ -59,8 +62,9 @@ internal static class ServiceHost
             ValidateInstallLocation();
             string owner = new SecurityIdentifier(File.ReadAllText(Path.Combine(InstallDirectory, "Owner.sid")).Trim()).Value;
             using var request = new ServiceEvent(RequestName(owner), owner, true);
-            Report(4); Log("Service running; waiting for the enrolled console account.");
-            RunSessions(owner, request);
+            Report(4); Log("Service running; managing the enrolled console session.");
+            if (loginDiagnostic) RunLoginDiagnostic(owner);
+            else RunSessions(owner, request);
         }
         catch (Exception ex) { error = 1064; Log("Service failed: " + ex.Message); }
         finally { Report(1, error); }
@@ -81,6 +85,9 @@ internal static class ServiceHost
     private static void RunSessions(string owner, ServiceEvent request)
     {
         SessionProcess? child = null;
+        SessionProcess? login = null;
+        uint loginSession = 0;
+        long loginStamp = 0, settingsStamp = 0, loginRetryAfter = 0;
         string? currentLogon = null;
         bool quit = false;
         long retryAfter = 0;
@@ -93,11 +100,19 @@ internal static class ServiceHost
                 nint token = 0;
                 try
                 {
-                    if (session == uint.MaxValue || session == 0 || !WTSQueryUserToken(session, out token))
-                    { child?.Dispose(); child = null; currentLogon = null; continue; }
+                    if (session == uint.MaxValue || session == 0)
+                    { child?.Dispose(); child = null; login?.Dispose(); login = null; currentLogon = null; continue; }
+                    if (!WTSQueryUserToken(session, out token))
+                    {
+                        int error = Marshal.GetLastWin32Error();
+                        child?.Dispose(); child = null; currentLogon = null; quit = false;
+                        if (error == 1008) ManageLogin(session); // ERROR_NO_TOKEN: signed out
+                        else { login?.Dispose(); login = null; throw new Win32Exception(error, "Query console user"); }
+                        continue;
+                    }
                     using var identity = new WindowsIdentity(token);
                     if (identity.User?.Value != owner)
-                    { child?.Dispose(); child = null; currentLogon = null; continue; }
+                    { child?.Dispose(); child = null; login?.Dispose(); login = null; currentLogon = null; continue; }
                     // AuthenticationId, not just the recyclable Windows session id.
                     string logon = session + ":" + ReadLogonId(token);
                     if (currentLogon != logon)
@@ -109,6 +124,14 @@ internal static class ServiceHost
                         Log(quit ? "Glide quit; waiting for shortcut or next sign-in." : "Glide exited; retrying in ten seconds.");
                     }
                     if (requested) { quit = false; retryAfter = 0; child?.Show(); }
+                    if (!diagnostic && LoginEnrollment.Enabled() && IsLocked(session))
+                    {
+                        child?.Dispose(); child = null;
+                        if (!quit) ManageLogin(session);
+                        else { login?.Dispose(); login = null; }
+                        continue;
+                    }
+                    login?.Dispose(); login = null;
                     if (child is null && !quit && Environment.TickCount64 >= retryAfter)
                     {
                         retryAfter = Environment.TickCount64 + 10000;
@@ -121,7 +144,51 @@ internal static class ServiceHost
                 finally { if (token != 0) CloseHandle(token); stopping.Wait(1000); }
             }
         }
-        finally { child?.Dispose(); }
+        finally { child?.Dispose(); login?.Dispose(); }
+
+        void ManageLogin(uint session)
+        {
+            if (diagnostic || !LoginEnrollment.Enabled()) { login?.Dispose(); login = null; return; }
+            long stamp = File.GetLastWriteTimeUtc(LoginEnrollment.Profile).Ticks;
+            long configured = File.GetLastWriteTimeUtc(SettingsPath).Ticks;
+            if (login is not null && (loginSession != session || stamp != loginStamp || configured != settingsStamp || login.HasExited(out _)))
+            { login.Dispose(); login = null; }
+            if (login is null && Environment.TickCount64 >= loginRetryAfter)
+            {
+                loginRetryAfter = Environment.TickCount64 + 10000;
+                login = SessionProcess.StartLogin(owner, session, false);
+                loginSession = session; loginStamp = stamp; settingsStamp = configured;
+                Log("Sign-in receiver started in console session " + session + ".");
+            }
+        }
+    }
+    internal static bool IsLocked(uint session)
+    {
+        Check(WTSQuerySessionInformation(0, session, 25, out nint data, out uint length), "Query console lock state");
+        try
+        {
+            // x64 WTSINFOEX: DWORD Level, padding, LEVEL1 SessionId/State/Flags.
+            if (length < 20 || Marshal.ReadInt32(data) != 1 || unchecked((uint)Marshal.ReadInt32(data, 8)) != session)
+                throw new InvalidOperationException("Windows returned an unsupported console session state.");
+            int flags = Marshal.ReadInt32(data, 16);
+            return flags == 0 ? true : flags == 1 ? false : throw new InvalidOperationException("Console lock state is unknown.");
+        }
+        finally { WTSFreeMemory(data); }
+    }
+    private static void RunLoginDiagnostic(string owner)
+    {
+        uint session = WTSGetActiveConsoleSessionId();
+        if (session is 0 or uint.MaxValue) throw new InvalidOperationException("No physical console session for sign-in probe.");
+        Check(WTSQueryUserToken(session, out nint token), "Query enrolled console user for diagnostic");
+        try
+        {
+            using var user = new WindowsIdentity(token);
+            if (user.User?.Value != owner) throw new InvalidOperationException("Diagnostic requires the enrolled console user.");
+            using var child = SessionProcess.StartLogin(owner, session, true);
+            while (!stopping.Wait(100))
+                if (child.HasExited(out uint code)) throw new InvalidOperationException("Sign-in probe exited unexpectedly: " + code);
+        }
+        finally { CloseHandle(token); }
     }
     internal static long ReadLogonId(nint token)
     {
@@ -199,6 +266,44 @@ internal static class ServiceHost
                 if (environment != 0) DestroyEnvironmentBlock(environment);
                 if (primary != 0) CloseHandle(primary);
                 if (linked != 0) CloseHandle(linked);
+            }
+        }
+        internal static SessionProcess StartLogin(string owner, uint session, bool probe)
+        {
+            nint primary = 0, environment = 0, job = 0;
+            ProcessInfo process = default;
+            ServiceEvent? stop = null, show = null;
+            try
+            {
+                using var system = WindowsIdentity.GetCurrent();
+                if (!system.IsSystem || session is 0 or uint.MaxValue || session != WTSGetActiveConsoleSessionId())
+                    throw new InvalidOperationException("Sign-in receiver requires SYSTEM and the physical console session.");
+                Check(DuplicateTokenEx(system.Token, 0x02000000, 0, 2, 1, out primary), "Duplicate sign-in primary token");
+                Check(SetTokenInformation(primary, 12, ref session, sizeof(uint)), "Set sign-in console session");
+                Check(CreateEnvironmentBlock(out environment, primary, false), "Create sign-in environment");
+                stop = new ServiceEvent("Global\\Glide.Service.Stop." + Guid.NewGuid().ToString("N"), owner, false, true);
+                show = new ServiceEvent("Global\\Glide.Service.Show." + Guid.NewGuid().ToString("N"), owner, false);
+                job = CreateJobObject(0, null); Check(job != 0, "Create sign-in lifetime job");
+                var limits = new JobLimits { Basic = new JobBasic { Flags = 0x2000 } };
+                Check(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<JobLimits>()), "Configure sign-in lifetime job");
+                var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Desktop = "winsta0\\winlogon" };
+                var command = new StringBuilder("\"" + Executable + (probe ? "\" --login-probe " : "\" --login-receiver ") + stop.Name + " " + show.Name);
+                Check(CreateProcessAsUser(primary, Executable, command, 0, 0, false, 0x404, environment, InstallDirectory, ref startup, out process), "Start fixed sign-in receiver");
+                Check(AssignProcessToJobObject(job, process.Process), "Attach sign-in lifetime");
+                Check(ResumeThread(process.Thread) != uint.MaxValue, "Resume sign-in receiver");
+                CloseHandle(process.Thread); process.Thread = 0;
+                var result = new SessionProcess(process.Process, job, stop, show);
+                process.Process = 0; job = 0; stop = null; show = null;
+                return result;
+            }
+            finally
+            {
+                if (process.Thread != 0) CloseHandle(process.Thread);
+                if (process.Process != 0) { TerminateProcess(process.Process, 1); CloseHandle(process.Process); }
+                if (job != 0) CloseHandle(job);
+                stop?.Dispose(); show?.Dispose();
+                if (environment != 0) DestroyEnvironmentBlock(environment);
+                if (primary != 0) CloseHandle(primary);
             }
         }
         internal bool HasExited(out uint code)

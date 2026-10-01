@@ -16,6 +16,8 @@ internal sealed class Settings
     internal bool DiscoveryEnabled { get => Get("DiscoveryEnabled", "True").Equals("True", StringComparison.OrdinalIgnoreCase); set => values["DiscoveryEnabled"] = value.ToString(); }
     internal string PeerName { get => Get("PeerName", ""); set => values["PeerName"] = value; }
     private string Get(string key, string fallback) => values.GetValueOrDefault(key, fallback);
+    internal string StoredIdentity => Get("ReceiverIdentity", "");
+    internal bool HasPeer => Get("PeerCredential", "").Length > 0;
     internal Settings(string? path = null, bool loadFromDisk = true)
     {
         Path = path ?? System.IO.Path.Combine(AppContext.BaseDirectory, "Glide.ini");
@@ -59,19 +61,20 @@ internal sealed class Settings
             string.Join("\r\n", values.Select(kv => kv.Key + "=" + kv.Value.Replace("\r", "").Replace("\n", ""))) + "\r\n";
         File.WriteAllText(Path + ".tmp", text, new UTF8Encoding(false));
         File.Move(Path + ".tmp", Path, true);
+        LoginEnrollment.SyncIfInstalled(this);
     }
     [StructLayout(LayoutKind.Sequential)] private struct Blob { public int Length; public nint Data; }
     [DllImport("crypt32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool CryptProtectData(ref Blob input, string? description, nint entropy, nint reserved, nint prompt, uint flags, out Blob output);
     [DllImport("crypt32.dll", SetLastError = true)] private static extern bool CryptUnprotectData(ref Blob input, nint description, nint entropy, nint reserved, nint prompt, uint flags, out Blob output);
     [DllImport("kernel32.dll")] private static extern nint LocalFree(nint memory);
-    private static byte[] Protect(byte[] bytes, bool encrypt)
+    internal static byte[] Protect(byte[] bytes, bool encrypt, bool machine = false)
     {
         var input = new Blob { Length = bytes.Length, Data = Marshal.AllocHGlobal(bytes.Length) };
         try
         {
             Marshal.Copy(bytes, 0, input.Data, bytes.Length);
             Blob output;
-            bool ok = encrypt ? CryptProtectData(ref input, "Glide pairing", 0, 0, 0, 1, out output) : CryptUnprotectData(ref input, 0, 0, 0, 0, 1, out output);
+            bool ok = encrypt ? CryptProtectData(ref input, "Glide pairing", 0, 0, 0, machine ? 5u : 1u, out output) : CryptUnprotectData(ref input, 0, 0, 0, 0, 1, out output);
             if (!ok) throw new InvalidOperationException(encrypt ? $"Windows could not protect pairing credentials (error {Marshal.GetLastWin32Error()})." : "Cannot unlock Glide.ini credentials. Pair again under this Windows account using a fresh INI.");
             try { var result = new byte[output.Length]; Marshal.Copy(output.Data, result, 0, result.Length); return result; }
             finally { unsafe { new Span<byte>((void*)output.Data, output.Length).Clear(); } LocalFree(output.Data); }

@@ -1,5 +1,5 @@
 param([switch]$SkipTests, [switch]$SkipLocalCopy)
-$releaseVersion = '0.6.4'
+$releaseVersion = '0.7.0'
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
@@ -7,6 +7,7 @@ try {
         dotnet run --project tests/Glide.Tests -c Release
         if ($LASTEXITCODE -ne 0) { throw 'Core tests failed.' }
         & (Join-Path $PSScriptRoot 'tests/Glide.Tests/ServiceCleanup.Tests.ps1')
+        & (Join-Path $PSScriptRoot 'tests/Glide.Tests/LoginServiceCleanup.Tests.ps1')
     }
     dotnet publish src/Glide.App/Glide.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/native --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }

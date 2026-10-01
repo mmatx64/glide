@@ -15,6 +15,8 @@ internal sealed class InputWorker : IDisposable
     internal delegate uint InputSender(ReadOnlySpan<Input> inputs);
     private readonly InputSender sendInput;
     private readonly Action wakeScreenSaver;
+    private readonly Func<bool> inputAllowed;
+    private readonly Func<bool> releaseAllowed;
     private readonly HookProc mouseProc, keyProc;
     private readonly bool[] physical = new bool[256], suppressed = new bool[768];
     private readonly Dictionary<int, Packet> heldKeys = new();
@@ -33,15 +35,18 @@ internal sealed class InputWorker : IDisposable
     private int disposing;
     internal bool IsRemote => remote;
     internal bool CapturingMouse => Volatile.Read(ref mouseHook) != 0;
+    internal string ThreadDesktop { get; private set; } = "";
     internal event Action<string>? Notice;
     private const nuint Tag = 0x474c4944;
     private const uint Work = WM_APP + 10, Incoming = WM_APP + 11;
 
-    internal InputWorker(InputSender? sendInput = null, Action? wakeScreenSaver = null)
+    internal InputWorker(InputSender? sendInput = null, Action? wakeScreenSaver = null, Func<bool>? inputAllowed = null, Func<bool>? releaseAllowed = null)
     {
         this.sendInput = sendInput ?? SendNativeInput;
         // Mock injection must also avoid changing the user's real screensaver.
         this.wakeScreenSaver = wakeScreenSaver ?? (sendInput is null ? new ScreenSaver().Wake : () => { });
+        this.inputAllowed = inputAllowed ?? (() => true);
+        this.releaseAllowed = releaseAllowed ?? this.inputAllowed;
         mouseProc = Mouse; keyProc = Keyboard;
         thread = new Thread(Loop) { IsBackground = true, Name = "Glide input" };
         thread.Start(); ready.Wait();
@@ -78,6 +83,7 @@ internal sealed class InputWorker : IDisposable
         {
             SetThreadDpiAwarenessContext(-4);
             threadId = GetCurrentThreadId(); PeekMessage(out _, 0, 0, 0, 0);
+            ThreadDesktop = LoginReceiver.DesktopName(GetThreadDesktop(threadId));
             desktop = Desktop;
             keyHook = SetWindowsHookEx(13, keyProc, GetModuleHandle(null), 0);
             if (keyHook == 0) throw new InvalidOperationException("Windows refused the keyboard hook.");
@@ -346,6 +352,11 @@ internal sealed class InputWorker : IDisposable
     private void Inject(Input input, bool required) => Inject(new ReadOnlySpan<Input>(in input), required);
     private void Inject(ReadOnlySpan<Input> inputs, bool required)
     {
+        if (!(required ? inputAllowed() : releaseAllowed()))
+        {
+            if (required) throw new InvalidOperationException("Sign-in desktop changed. Reconnecting.");
+            return;
+        }
         if (sendInput(inputs) != inputs.Length && required)
             throw new InvalidOperationException("Windows blocked input. Elevated apps and secure desktops require local control.");
     }

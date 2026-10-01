@@ -37,6 +37,9 @@ internal static class ServiceNative
         nint processAttributes, nint threadAttributes, bool inherit, uint flags, nint environment, string directory, ref StartupInfo startup, out ProcessInfo process);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string text, uint revision, out nint descriptor, out uint size);
     [DllImport("wtsapi32.dll", SetLastError = true)] internal static extern bool WTSQueryUserToken(uint session, out nint token);
+    [DllImport("wtsapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool WTSQuerySessionInformation(nint server, uint session, int informationClass, out nint buffer, out uint bytes);
+    [DllImport("wtsapi32.dll")] internal static extern void WTSFreeMemory(nint memory);
+    [DllImport("advapi32.dll", SetLastError = true)] internal static extern bool SetTokenInformation(nint token, int informationClass, ref uint value, uint length);
     [DllImport("kernel32.dll")] internal static extern uint WTSGetActiveConsoleSessionId();
     [DllImport("kernel32.dll", SetLastError = true)] internal static extern bool CloseHandle(nint handle);
     [DllImport("kernel32.dll")] internal static extern nint LocalFree(nint value);

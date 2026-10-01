@@ -6,6 +6,8 @@ namespace Glide;
 
 internal sealed class Engine : IDisposable
 {
+    private readonly Func<InputWorker>? inputFactory;
+    internal Engine(Func<InputWorker>? inputFactory = null) => this.inputFactory = inputFactory;
     private readonly object gate = new();
     private CancellationTokenSource? cancellation;
     private Task? task;
@@ -94,7 +96,7 @@ internal sealed class Engine : IDisposable
     }
     private InputWorker CreateInput()
     {
-        var worker = new InputWorker();
+        var worker = inputFactory?.Invoke() ?? new InputWorker();
         worker.Notice += text => status = text;
         worker.EmergencyStopped += () => { Stop("Emergency stop · sharing is off"); EmergencyStopped?.Invoke(); };
         return worker;

@@ -17,6 +17,10 @@ internal static class Program
         if (args.Length > 0 && args[0] is "--update-job-probe" or "--update-lifetime-probe") return UpdateInstaller.RunJobProbe(args);
         if (args.SequenceEqual(new[] { "--service" })) return ServiceHost.Run();
         if (args.SequenceEqual(new[] { "--service-test" })) return ServiceHost.Run(true);
+        if (args.SequenceEqual(new[] { "--service-login-test" })) return ServiceHost.Run(true, true);
+        if (args.SequenceEqual(new[] { "--enroll-login-control" })) return LoginEnrollment.Enroll();
+        if (args.SequenceEqual(new[] { "--make-login-probe" })) return LoginEnrollment.CreateProbe();
+        if (args.Length > 0 && args[0] is "--login-receiver" or "--login-probe") return LoginReceiver.Run(args, args[0] == "--login-probe");
         if (args.SequenceEqual(new[] { "--open-service" }) || (args.Length == 0 &&
             string.Equals(Environment.ProcessPath, ServiceHost.Executable, StringComparison.OrdinalIgnoreCase)))
             return ServiceHost.OpenInstalled();

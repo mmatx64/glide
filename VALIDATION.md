@@ -1,5 +1,14 @@
 # Glide validation — October 1, 2026
 
+## v0.7.0: opt-in sign-in and unlock receiver
+
+- User requested receiving-PC startup after reboot/sign-out and remote keyboard/mouse for Windows login, including unlocking. Existing local `GlideSessionService` was already LocalSystem/Automatic/Running, but only launched the user app after sign-in.
+- Installer adds explicit `-EnableLoginControl` / `-DisableLoginControl` switches. A paired, unpaused service Receiver exports its existing identity into machine DPAPI under administrator/SYSTEM-only service data. Enrollment is bound to the owner SID and exact saved receiver identity; Pause, missing pairing, Controller role, identity changes, corruption and oversized input are rejected. Normal updates preserve the opt-in; portable settings do not create enrollment.
+- Service starts a fixed SYSTEM child on physical-console Winlogon when there is no console user token or the enrolled account is locked. The headless child has the existing pinned-TLS receiver and optional discovery, no first pairing, UI, updater or controller mode. Unlock stops it and restores the ordinary elevated user app; other users/sessions are rejected. Without opt-in, the previous lock behavior is retained. Settings/profile changes restart or stop the sign-in child.
+- Input is guarded by physical console, active Winlogon desktop and signed-out/enrolled-locked state. New input stops on desktop transition; cleanup permits only tracked releases on Winlogon or the enrolled user's Default desktop. UAC secure prompts, SAS, RDP and pre-Windows/BitLocker input are unsupported.
+- Managed Release build passed without warnings/errors, and all 29 managed native self-test checks passed. New tests preserve the existing pairing across enrollment and exercise invalid enrollment, real WTS lock-state ABI and a transition through the production receiver with mock injection that blocks new input, stops the peer and releases a held key.
+- Real SYSTEM/Winlogon diagnostic and final NativeAOT build remain to be recorded below. No actual reboot, lock, sign-out or Windows login input has been performed by automated tests; two-PC acceptance remains outstanding.
+
 ## v0.6.4: actual built-in screensaver discovery
 
 - User feedback: v0.6.3 still cannot wake a built-in receiver screensaver; Glide stays Connected. The earlier mock-window check did not establish compatibility with the built-in savers.

@@ -3,7 +3,10 @@ param(
     [string]$SettingsPath,
     [switch]$NoStart,
     [switch]$SkipFirewall,
-    [switch]$DiagnosticMode
+    [switch]$DiagnosticMode,
+    [switch]$LoginDiagnosticMode,
+    [switch]$EnableLoginControl,
+    [switch]$DisableLoginControl
 )
 $ErrorActionPreference = 'Stop'
 $serviceName = 'GlideSessionService'
@@ -15,6 +18,8 @@ $shortcutPath = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Glid
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $ownerSid = $identity.User.Value
 $admin = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($EnableLoginControl -and $DisableLoginControl) { throw 'Choose EnableLoginControl or DisableLoginControl.' }
+if ($DiagnosticMode -and $LoginDiagnosticMode) { throw 'Choose one diagnostic mode.' }
 
 if ($Action -eq 'Status') {
     Get-Service -Name $serviceName -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType
@@ -32,6 +37,9 @@ if (-not $admin) {
     if ($NoStart) { $arguments += ' -NoStart' }
     if ($SkipFirewall) { $arguments += ' -SkipFirewall' }
     if ($DiagnosticMode) { $arguments += ' -DiagnosticMode' }
+    if ($LoginDiagnosticMode) { $arguments += ' -LoginDiagnosticMode' }
+    if ($EnableLoginControl) { $arguments += ' -EnableLoginControl' }
+    if ($DisableLoginControl) { $arguments += ' -DisableLoginControl' }
     $setup = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     exit $setup.ExitCode
 }
@@ -71,8 +79,10 @@ try {
     $existing = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
     $normalBinaryPath = '"' + $installedExe + '" --service'
     $testBinaryPath = '"' + $installedExe + '" --service-test'
-    $binaryPath = if ($DiagnosticMode) { $testBinaryPath } else { $normalBinaryPath }
-    if ($existing -and $existing.PathName -notin @($normalBinaryPath,$testBinaryPath)) { throw 'Existing service points to an unexpected executable. Refusing to replace it.' }
+    $loginTestBinaryPath = '"' + $installedExe + '" --service-login-test'
+    $binaryPath = if ($DiagnosticMode) { $testBinaryPath } elseif ($LoginDiagnosticMode) { $loginTestBinaryPath } else { $normalBinaryPath }
+    if ($existing -and $existing.PathName -notin @($normalBinaryPath,$testBinaryPath,$loginTestBinaryPath)) { throw 'Existing service points to an unexpected executable. Refusing to replace it.' }
+    if ($existing -and $existing.StartName -ne 'LocalSystem') { throw 'The existing Glide service must run as LocalSystem.' }
     if ($Action -eq 'Uninstall') {
         if ($existing) {
             Stop-Service -Name $serviceName -Force
@@ -101,7 +111,8 @@ try {
     Protect-Directory $dataRoot $false
     Protect-Directory $dataFolder $false
     foreach ($name in @('Glide.exe','Owner.sid')) { Assert-NoReparse (Join-Path $installFolder $name) }
-    foreach ($name in @('Glide.ini','Glide.ini.tmp','service.log','service.log.previous')) { Assert-NoReparse (Join-Path $dataFolder $name) }
+    $dataNames = @('Glide.ini','Glide.ini.tmp','service.log','service.log.previous','LoginControl.enabled','LoginReceiver.dat','LoginReceiver.dat.tmp','LoginDpapi.probe','login-probe.txt')
+    foreach ($name in $dataNames) { Assert-NoReparse (Join-Path $dataFolder $name) }
     Copy-Item -LiteralPath $sourceExe -Destination $installedExe -Force
     Set-Content -LiteralPath $ownerFile -Value $ownerSid -Encoding ascii
     $targetSettings = Join-Path $dataFolder 'Glide.ini'
@@ -111,16 +122,27 @@ try {
     }
     # Reset explicit child ACLs as well, including files retained across upgrades.
     foreach ($file in @($installedExe,$ownerFile)) { & icacls.exe $file /reset | Out-Null; Check-Native 'Protect installed files' }
-    foreach ($name in @('Glide.ini','Glide.ini.tmp','service.log','service.log.previous')) {
+    foreach ($name in $dataNames) {
         $file = Join-Path $dataFolder $name
         if (Test-Path -LiteralPath $file) { & icacls.exe $file /reset | Out-Null; Check-Native 'Protect service data' }
+    }
+    $loginMarker = Join-Path $dataFolder 'LoginControl.enabled'
+    if ($DisableLoginControl) {
+        foreach ($name in @('LoginControl.enabled','LoginReceiver.dat','LoginReceiver.dat.tmp')) {
+            $file = Join-Path $dataFolder $name
+            if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file }
+        }
+    } elseif ($EnableLoginControl) { Set-Content -LiteralPath $loginMarker -Value $ownerSid -Encoding ascii }
+    if (Test-Path -LiteralPath $loginMarker) {
+        $enroll = Start-Process -FilePath $installedExe -ArgumentList '--enroll-login-control' -WindowStyle Hidden -Wait -PassThru
+        if ($enroll.ExitCode -ne 0) { throw "Sign-in receiver enrollment failed. See $dataFolder\service.log" }
     }
     if (-not $existing) { New-Service -Name $serviceName -BinaryPathName $binaryPath -DisplayName 'Glide session service' -StartupType Automatic | Out-Null }
     else {
         $changed = Invoke-CimMethod -InputObject $existing -MethodName Change -Arguments @{ PathName = $binaryPath; StartMode = 'Automatic' }
         if ($changed.ReturnValue -ne 0) { throw "Update service command failed: $($changed.ReturnValue)" }
     }
-    & sc.exe description $serviceName 'Starts the protected Glide app elevated as the enrolled administrator in the active console session. No SYSTEM desktop UI or network listener.' | Out-Null
+    & sc.exe description $serviceName 'Starts Glide for the enrolled console account. Opt-in paired receiver supports sign-in/unlock through a fixed SYSTEM child; no SYSTEM UI.' | Out-Null
     Check-Native 'Set service description'
     & sc.exe failure $serviceName reset= 86400 actions= restart/5000/restart/15000 | Out-Null
     Check-Native 'Set service recovery'
@@ -138,6 +160,7 @@ try {
     if (-not $NoStart) { Start-Service -Name $serviceName }
     Write-Output "Installed $serviceName for $ownerSid. Settings: $targetSettings"
     Write-Output 'Quit any portable Glide instance so the service can start its copy. Use the Glide (service) Start menu shortcut to reopen it.'
+    if (Test-Path -LiteralPath $loginMarker) { Write-Output 'Sign-in/unlock control is enabled for a paired, unpaused Receiver role. Pair/start the receiving service PC before rebooting.' }
 } catch {
     Write-Error $_
     exit 1

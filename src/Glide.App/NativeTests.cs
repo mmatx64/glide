@@ -24,6 +24,7 @@ internal static class NativeTests
             }
             ServiceTests();
             lines.Add("PASS service ABI, token/logon queries, bounded event names, event lifecycle, and untrusted install-path rejection");
+            LoginTests.Run(directory, lines).GetAwaiter().GetResult();
             KeypadTest();
             lines.Add("PASS keypad digits/decimal/navigation, key-up flags, and Windows translation with either Num Lock state (no input injected)");
             ScreenSaverTests.Run(lines);
