@@ -43,6 +43,7 @@ internal static class WheelTests
                 worker.Attach(server, false, true);
                 worker.Receive(server, new(MessageKind.Activate, 1000, 2000));
                 if (!entered.Wait(TimeSpan.FromSeconds(5))) throw new Exception("Receiver did not activate.");
+                if (worker.CapturingMouse) throw new Exception("Receiver installed an unnecessary mouse hook.");
                 var packets = new List<Packet>();
                 for (int i = 0; i < 192; i++)
                 {
@@ -91,7 +92,14 @@ internal static class WheelTests
                 worker.Receive(server, new(MessageKind.Key, 65, 30, 2));
                 if (!finished.Wait(TimeSpan.FromSeconds(2)) || actual[^2] != "M:4096:1:0:0")
                     throw new Exception("Isolated wheel stalled.");
+                worker.Attach(server, true, true);
+                if (!SpinWait.SpinUntil(() => worker.CapturingMouse, TimeSpan.FromSeconds(2)))
+                    throw new Exception("Controller did not install its mouse hook.");
+                worker.Attach(server, false, true);
+                if (!SpinWait.SpinUntil(() => !worker.CapturingMouse, TimeSpan.FromSeconds(2)) || !server.IsAlive)
+                    throw new Exception("Receiver role change did not release its mouse hook.");
             }
+            lines.Add("PASS controller/receiver role changes install and release mouse capture; receivers retain emergency keyboard handling without a mouse hook");
 
             var failedPair = await Connect();
             await using var failedClient = failedPair.Client; await using var failedServer = failedPair.Server;

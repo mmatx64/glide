@@ -27,6 +27,7 @@ internal static class NativeTests
             KeypadTest();
             lines.Add("PASS keypad digits/decimal/navigation, key-up flags, and Windows translation with either Num Lock state (no input injected)");
             WheelTests.Run(lines).GetAwaiter().GetResult();
+            WheelPipelineTests.Run(lines).GetAwaiter().GetResult();
             WindowTextTest();
             lines.Add("PASS Unicode window title and edit text round-trip");
             string path = System.IO.Path.Combine(directory, "test.ini");

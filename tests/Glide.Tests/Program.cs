@@ -20,6 +20,7 @@ async Task Reject(Func<Task> action, string name)
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(35));
 var ct = deadline.Token;
 await OutboxBatchTests.Run(Check, ct);
+await PacketBatchTests.Run(Check, ct);
 await UpdateTests.Run(Check, ct);
 var original = new Packet(MessageKind.Key, 0x41, 30, 3, 123456789012);
 var bytes = new byte[Packet.Size]; original.Write(bytes);
@@ -67,14 +68,22 @@ await using var server = await accept;
 Check(client.RemoteWidth == 2560 && server.RemoteWidth == 1920, "TLS-authenticated desktop negotiation");
 var samples = new ConcurrentQueue<double>();
 var echoes = new ConcurrentQueue<Packet>();
+var batchEchoes = new ConcurrentQueue<Packet>();
 var arrived = new SemaphoreSlim(0);
+using var batchArrived = new SemaphoreSlim(0);
 server.Input += packet => server.Send(packet);
 client.Input += packet => { echoes.Enqueue(packet); samples.Enqueue(Stopwatch.GetElapsedTime(packet.Stamp).TotalMilliseconds); arrived.Release(); };
+client.InputBatch += packets =>
+{
+    foreach (var packet in packets) batchEchoes.Enqueue(packet);
+    batchArrived.Release(packets.Length);
+};
 var serverRun = server.RunAsync(ct); var clientRun = client.RunAsync(ct);
 for (int i = 0; i < 250; i++)
 {
     client.Send(new Packet(MessageKind.Move, i, 123, Stamp: Stopwatch.GetTimestamp()));
     await arrived.WaitAsync(ct);
+    await batchArrived.WaitAsync(ct);
 }
 Check(echoes.Count == 250 && echoes.Last().A == 249, "250 encrypted input round-trips without loss");
 var ordered = samples.Order().ToArray();
@@ -82,6 +91,7 @@ Console.WriteLine($"MEASURE loopback encrypted RTT: median={ordered[125]:F3} ms,
 await Task.Delay(500, ct);
 Check(client.RoundTripMs > 0, "idle heartbeat keeps channel warm and measures RTT");
 echoes.Clear();
+batchEchoes.Clear();
 for (int burst = 0; burst < 5; burst++)
 {
     var expected = Enumerable.Range(0, 96).Select(i => (i % 4) switch
@@ -92,10 +102,12 @@ for (int burst = 0; burst < 5; burst++)
         _ => new Packet(MessageKind.Button, 4, Stamp: Stopwatch.GetTimestamp())
     }).ToArray();
     foreach (var packet in expected) CheckSilent(client.Send(packet));
-    foreach (var _ in expected) await arrived.WaitAsync(ct);
-    CheckSilent(echoes.ToArray().SequenceEqual(expected)); echoes.Clear();
+    foreach (var _ in expected) { await arrived.WaitAsync(ct); await batchArrived.WaitAsync(ct); }
+    CheckSilent(echoes.ToArray().SequenceEqual(expected) && batchEchoes.ToArray().SequenceEqual(expected));
+    echoes.Clear(); batchEchoes.Clear();
 }
 Check(true, "batched TLS preserves 480 mixed movement/key/button events in exact order");
+Check(true, "batch subscribers receive the same ordered input as legacy callbacks with heartbeat traffic excluded");
 server.Stop(); await Ignore(serverRun); await Ignore(clientRun);
 Check(!client.IsAlive, "disconnect stops session");
 await server.DisposeAsync(); await client.DisposeAsync();

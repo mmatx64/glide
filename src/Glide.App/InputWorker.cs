@@ -31,6 +31,7 @@ internal sealed class InputWorker : IDisposable
     private Exception? startupError;
     private int disposing;
     internal bool IsRemote => remote;
+    internal bool CapturingMouse => Volatile.Read(ref mouseHook) != 0;
     internal event Action<string>? Notice;
     private const nuint Tag = 0x474c4944;
     private const uint Work = WM_APP + 10, Incoming = WM_APP + 11;
@@ -50,14 +51,17 @@ internal sealed class InputWorker : IDisposable
     internal void Attach(Connection peer, bool isController, bool remoteRight) => Post(() =>
     {
         Reset(); connection = peer; controller = isController; right = remoteRight;
+        SetMouseCapture(isController);
         desktop = Desktop; GetCursorPos(out lastLocal); cooldown = Environment.TickCount64 + 700;
     });
-    internal void Detach() => Post(() => { Reset(); connection = null; });
+    internal void Detach() => Post(() => { Reset(); connection = null; controller = false; SetMouseCapture(false); });
     internal void Emergency() => Post(Panic);
     internal void Receive(Connection peer, Packet packet)
+        => ReceiveBatch(peer, new ReadOnlySpan<Packet>(in packet));
+    internal void ReceiveBatch(Connection peer, ReadOnlySpan<Packet> packets)
     {
         if (Volatile.Read(ref disposing) != 0) { peer.Stop(); return; }
-        if (!inbound.TryAdd(peer, packet, out bool wake)) return;
+        if (!inbound.TryAddBatch(peer, packets, out bool wake)) return;
         if (wake && !PostThreadMessage(threadId, Incoming, 0, 0)) peer.Stop();
     }
     private void Post(Action action)
@@ -72,9 +76,8 @@ internal sealed class InputWorker : IDisposable
             SetThreadDpiAwarenessContext(-4);
             threadId = GetCurrentThreadId(); PeekMessage(out _, 0, 0, 0, 0);
             desktop = Desktop;
-            mouseHook = SetWindowsHookEx(14, mouseProc, GetModuleHandle(null), 0);
             keyHook = SetWindowsHookEx(13, keyProc, GetModuleHandle(null), 0);
-            if (mouseHook == 0 || keyHook == 0) throw new InvalidOperationException("Windows refused the input hooks.");
+            if (keyHook == 0) throw new InvalidOperationException("Windows refused the keyboard hook.");
             timer = SetTimer(0, 0, 50, 0);
             if (timer == 0) throw new InvalidOperationException("Windows refused the input watchdog timer.");
             RegisterHotKey(0, 1, 0x4003, 0x7b);
@@ -108,6 +111,21 @@ internal sealed class InputWorker : IDisposable
             if (keyHook != 0) UnhookWindowsHookEx(keyHook);
             if (timer != 0) KillTimer(0, timer);
             UnregisterHotKey(0, 1);
+        }
+    }
+    private void SetMouseCapture(bool enabled)
+    {
+        // Only a controller needs to intercept the physical mouse. A receiver
+        // otherwise takes a needless low-level-hook callback for injected input.
+        if (enabled && mouseHook == 0)
+        {
+            mouseHook = SetWindowsHookEx(14, mouseProc, GetModuleHandle(null), 0);
+            if (mouseHook == 0) throw new InvalidOperationException("Windows refused the mouse hook.");
+        }
+        else if (!enabled && mouseHook != 0)
+        {
+            if (!UnhookWindowsHookEx(mouseHook)) throw new InvalidOperationException("Windows could not release the mouse hook.");
+            mouseHook = 0;
         }
     }
     private void DrainIncoming()

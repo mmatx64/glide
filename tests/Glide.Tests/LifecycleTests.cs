@@ -48,6 +48,24 @@ internal static class LifecycleTests
             check(wakes == 1 && drains == 6 && receivedBurst.SequenceEqual(burst),
                 "192 wheel events use one initial wake and six bounded drains without losing deltas, axes or reversals");
 
+            var atomicInbox = new Inbox(32);
+            check(atomicInbox.TryAddBatch(otherClient, burst.AsSpan(0, 32), out bool batchWake) && batchWake,
+                "a whole 32-packet receive batch is queued before its first wake");
+            check(atomicInbox.TakeBatch(burstBatch) == 32 && burstBatch.Select(item => item.Packet).SequenceEqual(burst.Take(32)),
+                "atomic receive batching preserves original wheel events");
+            check(atomicInbox.TryAddBatch(otherClient, burst.AsSpan(32, 32), out batchWake) && !batchWake && atomicInbox.CompleteBatch(),
+                "batch arrivals during injection use the existing continuation");
+            check(atomicInbox.TakeBatch(burstBatch) == 32 && !atomicInbox.CompleteBatch()
+                && atomicInbox.TryAddBatch(otherClient, burst.AsSpan(0, 1), out batchWake) && batchWake,
+                "batch completion rearms an immediate isolated-event wake");
+            var overflowPair = await Pair();
+            await using var overflowClient = overflowPair.Client; await using var overflowServer = overflowPair.Server;
+            var smallInbox = new Inbox(2);
+            smallInbox.TryAdd(overflowClient, new(MessageKind.Key, 65, 30));
+            check(!smallInbox.TryAddBatch(overflowClient, burst.AsSpan(0, 2), out _) && !overflowClient.IsAlive
+                && smallInbox.TakeBatch(burstBatch) == 1,
+                "receive-batch overflow closes the sender without enqueueing a partial batch");
+
             // Exercise both sides of the enqueue/complete race with a real producer
             // and consumer. Capacity reservations keep this test below overflow.
             var racingInbox = new Inbox();

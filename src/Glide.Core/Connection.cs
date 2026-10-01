@@ -29,6 +29,9 @@ public sealed class Connection : IAsyncDisposable
     public long Coalesced => outbox.Coalesced;
     public bool IsAlive => Volatile.Read(ref stopped) == 0;
     public event Action<Packet>? Input;
+    public delegate void InputBatchHandler(ReadOnlySpan<Packet> packets);
+    // The view is valid only during the callback; consumers must copy it.
+    public event InputBatchHandler? InputBatch;
 
     private Connection(TcpClient client, SslStream stream, int width, int height)
     { this.client = client; this.stream = stream; RemoteWidth = width; RemoteHeight = height; }
@@ -124,17 +127,22 @@ public sealed class Connection : IAsyncDisposable
     }
     private async Task ReadLoop(CancellationToken ct)
     {
-        var bytes = new byte[Packet.Size];
+        var reader = new PacketBatchReader();
+        var inputs = new Packet[32];
         while (!ct.IsCancellationRequested)
         {
-            await stream.ReadExactlyAsync(bytes, ct).ConfigureAwait(false);
-            var packet = Packet.Read(bytes);
+            var batch = await reader.ReadAsync(stream, ct).ConfigureAwait(false);
             Interlocked.Exchange(ref lastReceived, Stopwatch.GetTimestamp());
-            Interlocked.Increment(ref received);
-            if (packet.Kind == MessageKind.Ping) Send(packet with { Kind = MessageKind.Pong });
-            else if (packet.Kind == MessageKind.Pong)
-                Volatile.Write(ref roundTripMs, Math.Max(0, Stopwatch.GetElapsedTime(packet.Stamp).TotalMilliseconds));
-            else Input?.Invoke(packet);
+            Interlocked.Add(ref received, batch.Length);
+            int count = 0;
+            foreach (var packet in batch.Span)
+            {
+                if (packet.Kind == MessageKind.Ping) Send(packet with { Kind = MessageKind.Pong });
+                else if (packet.Kind == MessageKind.Pong)
+                    Volatile.Write(ref roundTripMs, Math.Max(0, Stopwatch.GetElapsedTime(packet.Stamp).TotalMilliseconds));
+                else { inputs[count++] = packet; Input?.Invoke(packet); }
+            }
+            if (count != 0) InputBatch?.Invoke(inputs.AsSpan(0, count));
         }
     }
     private async Task WriteLoop(CancellationToken ct)

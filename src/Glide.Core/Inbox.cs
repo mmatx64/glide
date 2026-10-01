@@ -2,19 +2,22 @@ namespace Glide.Core;
 
 public sealed class Inbox(int capacity = 256)
 {
-    private readonly Queue<(Connection Peer, Packet Packet)> queue = new();
+    private readonly Queue<(Connection Peer, Packet Packet)> queue = new(capacity);
     private readonly int capacity = capacity > 0 ? capacity : throw new ArgumentOutOfRangeException(nameof(capacity));
     private bool scheduled;
     public bool TryAdd(Connection peer, Packet packet) => TryAdd(peer, packet, out _);
     public bool TryAdd(Connection peer, Packet packet, out bool wake)
+        => TryAddBatch(peer, new ReadOnlySpan<Packet>(in packet), out wake);
+    public bool TryAddBatch(Connection peer, ReadOnlySpan<Packet> packets, out bool wake)
     {
         wake = false;
         if (!peer.IsAlive) return false;
+        if (packets.IsEmpty) return true;
         lock (queue)
         {
-            if (queue.Count < capacity)
+            if (packets.Length <= capacity - queue.Count)
             {
-                queue.Enqueue((peer, packet));
+                foreach (var packet in packets) queue.Enqueue((peer, packet));
                 wake = !scheduled; scheduled = true;
                 return true;
             }

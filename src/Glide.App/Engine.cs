@@ -79,7 +79,7 @@ internal sealed class Engine : IDisposable
                         if (token.IsCancellationRequested || ct.IsCancellationRequested || connection is not null) return;
                         connection = peer;
                         input.Attach(peer, controller, right);
-                        peer.Input += packet => input.Receive(peer, packet);
+                        peer.InputBatch += packets => input.ReceiveBatch(peer, packets);
                         status = controller ? "Connected · move across the screen edge" : "Connected · ready to receive input";
                     }
                     try { await peer.RunAsync(ct); }

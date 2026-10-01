@@ -1,5 +1,15 @@
 # Glide validation — October 1, 2026
 
+## v0.6.2: preserve wheel bursts through TLS receive
+
+- User feedback: v0.6.1 improved fast remote scrolling slightly, but lag remains across applications. The earlier blocked-queue test verified batching once input accumulated; it did not measure how production TLS delivery feeds the receiver.
+- TLS now reads up to 32 available packets at once, carries incomplete stream frames, and queues each input batch atomically before posting a wake. No wait to fill a batch, wire-protocol change, wheel-delta aggregation or relaxed queue/stop checks. Legacy per-packet callbacks remain compatible; heartbeat packets stay outside the input batch callback.
+- Removed receiving-side mouse capture hooks. Role changes install them only for controllers; receivers retain the keyboard emergency hook. Native tests check both role transitions and existing emergency preemption.
+- Added a real encrypted-loopback-to-production-receiver test with mock injection, including 12,800 wheels in 64-event bursts and 200 isolated wheels. Exact signed/small deltas, axes and order survive. First managed comparison: **1,198 to 555 injection calls for the same 12,800 events**. Logs: `artifacts/wheel-pipeline-baseline.txt` and `artifacts/wheel-pipeline-batched.txt`. Timing samples are local and exclude actual `SendInput`, Wi-Fi and target application rendering; these are not measured two-PC improvements.
+- Decoder tests cover 1/31/33/77/1024/4096-byte stream fragments, immediate isolated-packet delivery, clean/truncated EOF, cancellation and invalid packet kinds. Queue tests cover whole-batch enqueue/wake, arrival during injection, isolated wake rearming, and overflow without partial enqueue.
+- **Full release build passed:** 99 core checks, 18 NativeAOT smoke checks and the three offline service-cleanup scenarios. Native TLS-to-mock-injection measured **401 calls for 12,800 burst events**, with median 0.030 ms / p95 0.038 ms locally; the 200 isolated events each delivered immediately in their own call. These NativeAOT timings are not directly comparable to the managed baseline or a two-PC measurement. Packaged `dist/Glide-0.6.2-win-x64.zip` and checksums; executable version `0.6.2.0`. Running local apps and installed service were left intact with `-SkipLocalCopy`.
+- Two-PC acceptance of the remaining fast-scroll delay is still outstanding. Update the receiving PC, or both PCs when reversing roles; pairings/settings remain compatible.
+
 ## v0.6.1: remote wheel receiver dispatch
 
 - Replaced per-packet Windows input wakes with one outstanding wake and drains of at most 32 already-queued packets. Consecutive wheel packets use one native `SendInput` array with a separate INPUT record for every delta. No delta aggregation, batching timer, wire-protocol or sender behavior change. Both axes, direction reversals and sub-120 deltas retain exact order; position/key/button/release and peer-identity changes remain barriers.
