@@ -113,7 +113,7 @@ internal static class ScreenSaverTests
                 if (mode == "overflow") worker.ReceiveBatch(server, Enumerable.Repeat(new Packet(MessageKind.Key, 66, 48), 257).ToArray());
                 if (!released.Wait(TimeSpan.FromSeconds(mode == "timeout" ? 5 : 1)) || server.IsAlive || records.Count != 3 || finished.IsSet)
                     throw new Exception("Deferred saver input blocked stop/overflow/deadline cleanup or injected after shutdown.");
-                if (mode == "timeout" && !failed.IsSet) throw new Exception("Saver wake deadline did not report failure.");
+                if (mode == "timeout" && !failed.Wait(TimeSpan.FromSeconds(1))) throw new Exception("Saver wake deadline did not report failure.");
             }
         }
         finally { listener.Stop(); }

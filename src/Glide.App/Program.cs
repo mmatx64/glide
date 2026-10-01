@@ -26,6 +26,7 @@ internal static class Program
             return ServiceHost.OpenInstalled();
         SetProcessDpiAwarenessContext(-4);
         if (args.Length == 2 && args[0] == "--idle-saver-test") return IdleSaverTest.Run(args[1]);
+        if (args.Length == 2 && args[0] == "--system-saver-test") return IdleSaverTest.Run(args[1], true);
         if (args.Contains("--self-test")) return NativeTests.Run();
         if (args.Contains("--service-probe"))
         {

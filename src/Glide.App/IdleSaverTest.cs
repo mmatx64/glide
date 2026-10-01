@@ -8,11 +8,11 @@ using static Glide.Native;
 namespace Glide;
 
 // Explicit diagnostic only, never part of --self-test or normal startup.
-// Temporarily shortens the runtime timeout, then restores it. The companion
-// script selects/restores a built-in saver when testing built-in compatibility.
+// Idle mode temporarily shortens the runtime timeout, then restores it.
+// System-command mode starts the same managed saver without changing timeout.
 internal static class IdleSaverTest
 {
-    internal static int Run(string output)
+    internal static int Run(string output, bool requestSystemStart = false)
     {
         var lines = new List<string>();
         int timeout = -1, result = 1;
@@ -29,12 +29,18 @@ internal static class IdleSaverTest
                 || !SystemParametersInfo(0x0e, 0, out timeout, 0))
                 throw new InvalidOperationException("Idle saver diagnostic requires an unlocked user console, enabled non-password saver and no already-running saver.");
             lines.Add($"OriginalTimeout={timeout}; original saver selection and password setting are unchanged by this executable.");
-            if (!SetSystemParametersInfo(0x0f, 5, 0, 2)) throw new InvalidOperationException("Cannot arm the temporary runtime timeout.");
-            armed = true;
+            if (requestSystemStart) RequestSystemSaver();
+            else
+            {
+                if (!SetSystemParametersInfo(0x0f, 5, 0, 2)) throw new InvalidOperationException("Cannot arm the temporary runtime timeout.");
+                armed = true;
+            }
             if (!SpinWait.SpinUntil(() => SystemParametersInfo(0x72, 0, out int runningNow, 0) && runningNow != 0
                 && LoginReceiver.InputDesktopName() is "Screen-saver" or "ScreenSaver", TimeSpan.FromSeconds(25)))
-                throw new InvalidOperationException("Windows did not start an idle saver on its dedicated desktop. Physical activity can postpone this test.");
-            lines.Add("PASS Windows actually starts its idle saver on the active Screen-saver desktop; no direct /s launch or preview");
+                throw new InvalidOperationException("Windows did not start its saver on the dedicated desktop within the test deadline.");
+            lines.Add(requestSystemStart
+                ? "PASS Windows SC_SCREENSAVE starts its managed saver on Screen-saver; this is a system-command test, not an idle-timeout test"
+                : "PASS Windows actually starts its idle saver on the active Screen-saver desktop; no direct /s launch or preview");
             if (!SpinWait.SpinUntil(() => VisibleSaverWindow() != 0, TimeSpan.FromSeconds(5)))
                 throw new Exception("Windows switched to the saver desktop but no visible saver window appeared.");
             uint baseline = ProbeDefaultInput();
@@ -64,17 +70,17 @@ internal static class IdleSaverTest
         catch (Exception ex) { lines.Add("FAIL " + ex.Message); }
         finally
         {
-            if (armed)
+            if (armed || requestSystemStart)
             {
                 // Reset idle through the actual saver desktop before closing it;
                 // otherwise the short timeout can immediately start another saver.
                 bool restored = SpinWait.SpinUntil(() =>
                 {
                     saver.Wake();
-                    return SetSystemParametersInfo(0x0f, (uint)timeout, 0, 2);
+                    return requestSystemStart ? LoginReceiver.InputDesktopName() == "Default" : SetSystemParametersInfo(0x0f, (uint)timeout, 0, 2);
                 }, TimeSpan.FromSeconds(6));
                 if (restored && SystemParametersInfo(0x0e, 0, out int actual, 0) && actual == timeout)
-                    lines.Add($"PASS original runtime timeout restored to {timeout}; no stored timeout/password settings changed");
+                    lines.Add($"PASS original runtime timeout {(requestSystemStart ? "unchanged at" : "restored to")} {timeout}; no stored timeout/password settings changed");
                 else { lines.Add("FAIL restore timeout; dismiss the saver locally and restore Screen Saver Settings before further tests."); result = 1; }
             }
             File.WriteAllLines(Path.GetFullPath(output), lines);
@@ -87,6 +93,17 @@ internal static class IdleSaverTest
         // keystrokes/clicks, and a running saver has already been observed.
         var input = new Input { Data = new InputUnion { Mouse = new MouseInput { X = 1, Flags = 1, Extra = 0x474c4944 } } };
         return SendInput(1, &input, sizeof(Input));
+    }
+    private static void RequestSystemSaver()
+    {
+        WindowProc proc = DefWindowProc;
+        var cls = new WindowClass { Size = (uint)System.Runtime.InteropServices.Marshal.SizeOf<WindowClass>(),
+            Proc = proc, Instance = GetModuleHandle(null), Name = "Glide.SystemSaverTest." + Guid.NewGuid().ToString("N") };
+        if (RegisterClassEx(ref cls) == 0) throw new Exception("Cannot create the system-command test class.");
+        nint window = CreateWindowEx(0, cls.Name, "Hidden system saver request", 0, 0, 0, 1, 1, 0, 0, cls.Instance, 0);
+        if (window == 0) throw new Exception("Cannot create the system-command test window.");
+        try { DefWindowProc(window, 0x112, 0xf140, 0); }
+        finally { DestroyWindow(window); GC.KeepAlive(proc); }
     }
     private static nint VisibleSaverWindow()
     {
@@ -142,8 +159,8 @@ internal static class IdleSaverTest
                     || unchecked((int)injected[5].Data.Mouse.Data) != 120 || unchecked((int)injected[6].Data.Mouse.Data) != -120)
                     throw new Exception("Idle transition dropped/reordered input or disconnected the peer.");
                 if (LoginReceiver.InputDesktopName() != "Default" || !SystemParametersInfo(0x72, 0, out int active, 0) || active != 0)
-                    throw new Exception("The actual idle saver did not exit.");
-                lines.Add("PASS production wake dismisses the actual idle saver; authenticated TLS packets wait for Default then replay exact move/key down-up/click down-up/wheel reversal order (mock replay injection)");
+                    throw new Exception("The Windows-managed saver did not exit.");
+                lines.Add("PASS production wake dismisses the Windows-managed saver; authenticated TLS packets wait for Default then replay exact move/key down-up/click down-up/wheel reversal order (mock replay injection)");
                 lines.Add("PASS peer remains connected; no actual text/click/wheel input injected into normal applications; only a benign saver-desktop wake move");
             }
             finally
