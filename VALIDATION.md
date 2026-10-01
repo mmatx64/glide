@@ -1,5 +1,13 @@
 # Glide validation — October 1, 2026
 
+## v0.3.1: compact desk and session layout
+
+- Implemented the approved two-column layout with the existing navy/mint palette, version in the native title bar, and centered handoff instructions and Swap sides group. Connection controls and latency live in the Session panel. Manual setup and both pairing directions fit the smaller discovery panel; connected sessions no longer show the misleading selected-peer busy warning.
+- Before the version bump, the Release NativeAOT build, **all 38 core checks, and all native smoke checks passed**. That layout candidate was **4,500,992 bytes**, SHA-256 `8746AE9C904A8E3A8A5C0A20413814F91EEE8DE46F1130C3220EB8250CCEA312`. Tests were not rerun for the version-only bump, as requested.
+- Rendered 12 sample states using the built native executable: connected, standby, nearby, manual controller/receiver, outgoing/incoming confirmation, reconnecting, paused, long name, left arrangement at 150% scale, and error. Inspected the main layout, confirmation controls, manual field placement, truncation, and scaled arrangement. Preview images are under `artifacts/ui-validation/`; these are synthetic sessions, not evidence of two-PC connectivity.
+- Before the version bump, the title read back as `Glide  |  PORTABLE / v0.3`; it now specifies `v0.3.1`. A six-second hidden standby profile had 12 refresh calls and 1 visual invalidation. Preview/profile modes do not load or overwrite saved settings. Native EDIT contents and the title bar are not part of the off-screen preview images; desktop inspection timed out waiting for app access, so live field interaction was not verified in this pass.
+- Two-PC operation and visible connected-session repaint behavior remain subject to the physical acceptance pass below. No transport or input-forwarding code changed.
+
 ## v0.3.0: one-sided pairing and UI refresh fixes
 
 Native executable: **4,470,784 bytes**; SHA-256 `F8F82E3728E61264CE0BEDDFCC8B4044347DB5AAF3409EB2B58AC535F42293D3`.

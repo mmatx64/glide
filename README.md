@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version 0.3 is a preview; the latest pairing changes still need two-PC testing.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Source version **0.3.1** adds the compact desk/session layout. This is preview software; the latest pairing changes still need two-PC testing.
 
-**[Download Glide for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.3.0/Glide-0.3.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.3.0)
+**[Download the published v0.3.0 release for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.3.0/Glide-0.3.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.3.0)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -90,7 +90,7 @@ dotnet run --project tests/Glide.Tests -c Release
 .\dist\Glide\Glide.exe --profile C:\temp\glide-idle.txt
 ```
 
-Self-test writes results under `self-test` beside the executable and checks Win32 structures, Unicode titles/text, INI/DPAPI round-tripping, NativeAOT TLS echo, discovery, one-sided verified pairing, awaited role transitions, hook startup/emergency handling/teardown. It does not inject remote keystrokes. Preview renders native controls without networking or saving settings; `--preview-nearby` and `--preview-confirm` add example states; add `--preview-outgoing` for the initiating confirmation screen. Profile measures six seconds of standby with networking disabled, reports repaint/refresh counts, and exits. Neither mode is a two-PC benchmark.
+Self-test writes results under `self-test` beside the executable and checks Win32 structures, Unicode titles/text, INI/DPAPI round-tripping, NativeAOT TLS echo, discovery, one-sided verified pairing, awaited role transitions, hook startup/emergency handling/teardown. It does not inject remote keystrokes. Preview uses sample data without loading saved credentials, networking, or saving settings. Add `--preview-connected`, `--preview-nearby`, `--preview-manual`, `--preview-paused`, or `--preview-reconnecting` for those states. `--receiver-preview` selects the receiving role; `--preview-confirm` shows incoming pairing, with `--preview-outgoing` for the initiating screen. Use `--preview-left`, `--preview-long-name`, `--preview-error`, or `--preview-scale 1.5` for layout checks. `--preview-interactive` keeps the sample window open until Quit; Start does not connect. Profile measures six seconds of standby with networking disabled, reports repaint/refresh counts, and exits. Neither mode is a two-PC benchmark.
 
 ### Two-PC acceptance pass
 
@@ -103,7 +103,7 @@ Self-test writes results under `self-test` beside the executable and checks Win3
 ## Code map
 
 - `src/Glide.Core`: pinned TLS pairing, fixed-size wire protocol, bounded/coalescing outbox, heartbeat and coordinate conversion.
-- `src/Glide.App`: native Win32 UI, dedicated input thread, connection lifecycle, portable INI/DPAPI storage.
+- `src/Glide.App`: native Win32 UI (`Interface.cs` draws the desk/session panels), dedicated input thread, connection lifecycle, portable INI/DPAPI storage.
 - `tests/Glide.Tests`: dependency-free protocol, queue, authentication, loopback latency, and recovery checks.
 
 Reference behavior was checked against Microsoft's [Mouse Without Borders overview](https://learn.microsoft.com/en-us/windows/powertoys/mouse-without-borders), [low-level hook guidance](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc), and [SendInput restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).

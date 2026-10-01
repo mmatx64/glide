@@ -251,7 +251,7 @@ internal sealed partial class MainWindow
         Address or Code or Reveal => manualSetup && confirmation is null,
         Copy or ResetPair => manualSetup && !controller && confirmation is null,
         Manual => confirmation is null,
-        NextPeer => !manualSetup && controller && confirmation is null && nearby.Length > 1,
+        NextPeer => !manualSetup && controller && !SessionRunning && confirmation is null && nearby.Length > 1,
         Start => confirmation is null,
         ApprovePair or RejectPair => confirmation is { Prompt.Incoming: false },
         _ => true
@@ -269,33 +269,5 @@ internal sealed partial class MainWindow
             }
         }
         Caption(Manual, manualSetup ? "Nearby PCs" : "Manual setup");
-    }
-    private void DrawSetup(nint dc)
-    {
-        Box(dc, 36, 398, 828, 236, Surface, 18);
-        if (confirmation is { } request)
-        {
-            TextAt(dc, request.Prompt.Incoming ? "Pairing from your other PC" : "Confirm your receiving PC", 58, 414, 770, 30, 19, Ink, 600);
-            TextAt(dc, request.Prompt.Code, 58, 458, 770, 41, 29, Accent, 600);
-            TextAt(dc, $"Compare this code on both screens. Only pair if it matches.\n{request.Prompt.PeerName}  ·  {request.Prompt.Address}", 58, 512, 770, 49, 13, Muted, 400, 0x10);
-            if (request.Prompt.Incoming) TextAt(dc, "Confirm on the initiating PC · this PC connects automatically", 58, 585, 770, 24, 13, Accent);
-            return;
-        }
-        TextAt(dc, manualSetup ? "Manual connection" : controller ? "Nearby PCs" : "Ready for your other PC", 58, 414, 640, 29, 18, Ink, 600);
-        if (manualSetup) { DrawManualSetup(dc); return; }
-        if (controller)
-        {
-            TextAt(dc, selectedPeer?.Info.Name ?? (settings.PeerName.Length > 0 ? settings.PeerName : "Looking for Glide on your network…"), 58, 460, 640, 34, 21, Ink, 600);
-            string detail = selectedPeer is { } peer ? $"{peer.Address}  ·  {(IsTrusted(peer) ? "Remembered pairing" : "Ready to pair")}  ·  {(peer.Info.Receiver ? "Receives" : "Controls")}" : "Open Glide on both PCs. Nearby PCs appear automatically.";
-            TextAt(dc, detail, 58, 498, 770, 25, 13, Accent);
-            TextAt(dc, selectedPeer is { Info.Connected: true } ? "This PC is already sharing. Pause it there to make a new connection." : selectedPeer is { Info.Receiver: false } p && IsTrusted(p) ? "Both PCs are set to control. Choose “This PC receives” on the other PC." : "Pair once by comparing a short code. No IP or secret to copy.", 58, 532, 770, 25, 13, Muted);
-        }
-        else
-        {
-            TextAt(dc, Environment.MachineName, 58, 460, 770, 34, 21, Ink, 600);
-            TextAt(dc, "Choose this PC from the nearby list on your controlling PC.", 58, 502, 770, 25, 13, Accent);
-            TextAt(dc, "No approval needed here. Verify the code on the initiating PC.", 58, 534, 770, 25, 13, Muted);
-        }
-        TextAt(dc, engine.Connected ? "Encrypted connection ready" : settings.AutoConnect ? "Remembers your pairing and role" : "Automatic connection paused", 296, 585, 540, 24, 13, engine.Connected ? Accent : Muted);
     }
 }

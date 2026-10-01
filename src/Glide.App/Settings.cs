@@ -16,10 +16,10 @@ internal sealed class Settings
     internal bool DiscoveryEnabled { get => Get("DiscoveryEnabled", "True").Equals("True", StringComparison.OrdinalIgnoreCase); set => values["DiscoveryEnabled"] = value.ToString(); }
     internal string PeerName { get => Get("PeerName", ""); set => values["PeerName"] = value; }
     private string Get(string key, string fallback) => values.GetValueOrDefault(key, fallback);
-    internal Settings(string? path = null)
+    internal Settings(string? path = null, bool loadFromDisk = true)
     {
         Path = path ?? System.IO.Path.Combine(AppContext.BaseDirectory, "Glide.ini");
-        if (File.Exists(Path))
+        if (loadFromDisk && File.Exists(Path))
             foreach (var line in File.ReadLines(Path))
             {
                 var text = line.Trim();

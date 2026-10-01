@@ -15,7 +15,9 @@ internal static class Program
     {
         SetProcessDpiAwarenessContext(-4);
         if (args.Contains("--self-test")) return NativeTests.Run();
-        using var mutex = new Mutex(true, "Local\\Glide.Portable.Desktop", out bool first);
+        // Rendering diagnostics have no networking or input hooks and can coexist with Glide.
+        bool diagnostic = args.Contains("--preview") || args.Contains("--profile");
+        using var mutex = new Mutex(true, diagnostic ? null : "Local\\Glide.Portable.Desktop", out bool first);
         if (!first) { MessageBox(0, "Glide is already running. Open it from the system tray.", "Glide", 0x40); return 0; }
         try { using var window = new MainWindow(args); return window.Run(); }
         catch (Exception ex) { MessageBox(0, ex.Message, "Glide could not start", 0x10); return 1; }
@@ -26,6 +28,7 @@ internal sealed partial class MainWindow : IDisposable
 {
     private const uint Background = 0x10151c, Surface = 0x19212c, Field = 0x111923, Ink = 0xe9eff5,
         Muted = 0x91a0b3, Accent = 0x72e2c4;
+    private const int ClientWidth = 1000, ClientHeight = 640;
     private const uint Style = 0x00c00000 | 0x00080000 | 0x00020000 | 0x02000000;
     private readonly WindowProc proc;
     private readonly Settings settings;
@@ -60,14 +63,16 @@ internal sealed partial class MainWindow : IDisposable
     internal MainWindow(string[] args)
     {
         this.args = args;
-        settings = new Settings(); controller = settings.Role != "Receiver";
         proc = Procedure;
         int index = Array.IndexOf(args, "--preview");
         if (index >= 0 && index + 1 < args.Length) previewPath = System.IO.Path.GetFullPath(args[index + 1]);
         index = Array.IndexOf(args, "--profile");
         if (index >= 0 && index + 1 < args.Length) profilePath = System.IO.Path.GetFullPath(args[index + 1]);
+        settings = new Settings(loadFromDisk: previewPath is null && profilePath is null);
+        controller = settings.Role != "Receiver";
         if (args.Contains("--receiver-preview")) controller = false;
-        if (previewPath is null) settings.Save();
+        if (previewPath is not null) ConfigurePreview();
+        if (previewPath is null && profilePath is null) settings.Save();
     }
     internal int Run()
     {
@@ -76,7 +81,7 @@ internal sealed partial class MainWindow : IDisposable
         var wc = new WindowClass { Size = (uint)Marshal.SizeOf<WindowClass>(), Proc = proc,
             Instance = GetModuleHandle(null), Cursor = LoadCursor(0, 32512), Icon = icon, Name = "Glide.Main" };
         if (RegisterClassEx(ref wc) == 0) throw new InvalidOperationException("Could not register the app window.");
-        window = CreateWindowEx(0, wc.Name, "Glide", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), 900, 760, 0, 0, wc.Instance, 0);
+        window = CreateWindowEx(0, wc.Name, "Glide  |  PORTABLE / v0.3.1", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
         if (window == 0) throw new InvalidOperationException("Could not create the app window.");
         SynchronizationContext.SetSynchronizationContext(new WindowContext(this));
         FitWindow(GetDpiForWindow(window) / 96.0);
@@ -92,20 +97,13 @@ internal sealed partial class MainWindow : IDisposable
         Layout();
         tray = new NotifyIcon { Size = (uint)Marshal.SizeOf<NotifyIcon>(), Window = window, Id = 1,
             Flags = 1 | 2 | 4, Callback = WM_APP + 1, Icon = icon, Tip = "Glide · double-click to open", Info = "", Title = "" };
-        if (previewPath is null) trayAdded = Shell_NotifyIcon(0, ref tray);
+        if (previewPath is null && profilePath is null) trayAdded = Shell_NotifyIcon(0, ref tray);
         taskbarCreated = RegisterWindowMessage("TaskbarCreated");
         SetTimer(window, 1, 500, 0);
         ShowWindow(window, 5); UpdateWindow(window);
         if (previewPath is null && profilePath is null) StartNetworking();
-        if (previewPath is not null && args.Contains("--preview-nearby"))
-        {
-            selectedPeer = new NearbyPeer(new Announcement("YOUR-LAPTOP", new byte[32], true, false), IPAddress.Parse("192.168.1.24"), Environment.TickCount64);
-            nearby = [selectedPeer];
-        }
-        if (previewPath is not null && args.Contains("--preview-confirm"))
-            confirmation = new Confirmation(new PairingPrompt("YOUR-LAPTOP", "192.168.1.24", "A1B2 C3D4 E5F6", !args.Contains("--preview-outgoing")), new TaskCompletionSource<bool>());
         Refresh();
-        if (previewPath is not null) SetTimer(window, 2, 700, 0);
+        if (previewPath is not null && !args.Contains("--preview-interactive")) SetTimer(window, 2, 700, 0);
         if (profilePath is not null)
         {
             initialCpu = Process.GetCurrentProcess().TotalProcessorTime; profileWatch.Start();
@@ -124,9 +122,9 @@ internal sealed partial class MainWindow : IDisposable
         var monitor = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
         if (!GetMonitorInfo(MonitorFromWindow(window, 2), ref monitor))
             monitor.Work = new Rect(0, 0, GetSystemMetrics(0), GetSystemMetrics(1));
-        scale = Math.Min(dpiScale, Math.Min((monitor.Work.Width - 24) / 900.0, (monitor.Work.Height - 70) / 750.0));
+        scale = Math.Min(previewScale ?? dpiScale, Math.Min((monitor.Work.Width - 24) / (double)ClientWidth, (monitor.Work.Height - 70) / (double)ClientHeight));
         scale = Math.Max(.5, scale);
-        var rect = new Rect(0, 0, S(900), S(750)); AdjustWindowRectEx(ref rect, Style, false, 0);
+        var rect = new Rect(0, 0, S(ClientWidth), S(ClientHeight)); AdjustWindowRectEx(ref rect, Style, false, 0);
         MoveWindow(window, monitor.Work.Left + Math.Max(0, (monitor.Work.Width - rect.Width) / 2),
             monitor.Work.Top + Math.Max(0, (monitor.Work.Height - rect.Height) / 2), rect.Width, rect.Height, false);
     }
@@ -152,14 +150,14 @@ internal sealed partial class MainWindow : IDisposable
             MoveWindow(controls[id], S(x), S(y), S(w), S(h), true);
             SendMessage(controls[id], 0x30, (nuint)Font(14, 500), 1);
         }
-        Place(RoleControl, 36, 167, 180, 42); Place(RoleReceive, 224, 167, 180, 42);
-        Place(Side, 714, 173, 150, 32);
-        Place(Address, 58, 470, 260, 25); Place(Code, 358, 470, 378, 25);
-        Place(Reveal, 752, 464, 88, 36); Place(Copy, 710, 517, 130, 35);
-        Place(Start, 58, 573, 220, 44); Place(ResetPair, 580, 517, 118, 35);
-        Place(Hide, 654, 697, 132, 32); Place(Quit, 796, 697, 68, 32);
-        Place(Manual, 708, 409, 132, 32); Place(NextPeer, 708, 465, 132, 35);
-        Place(ApprovePair, 58, 573, 220, 44); Place(RejectPair, 292, 573, 130, 44);
+        Place(RoleControl, 672, 112, 288, 46); Place(RoleReceive, 672, 168, 288, 46);
+        Place(Side, 154, 319, 160, 34);
+        Place(Address, 56, 454, 170, 25); Place(Code, 264, 454, 266, 25);
+        Place(Reveal, 546, 450, 54, 33); Place(Copy, 342, 502, 124, 32);
+        Place(Start, 672, 504, 288, 44); Place(ResetPair, 476, 502, 124, 32);
+        Place(Hide, 772, 599, 130, 32); Place(Quit, 914, 599, 70, 32);
+        Place(Manual, 486, 392, 114, 32); Place(NextPeer, 490, 437, 110, 32);
+        Place(ApprovePair, 672, 450, 288, 44); Place(RejectPair, 672, 506, 288, 38);
     }
     private void SwitchRole(bool useController, bool save = true)
     {
@@ -171,7 +169,7 @@ internal sealed partial class MainWindow : IDisposable
         if (!controller)
         {
             if (previewPath is null && profilePath is null) identity ??= settings.Identity();
-            addresses = string.Join("  ·  ", Dns.GetHostAddresses(Dns.GetHostName()).Where(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a)).Select(a => a.ToString()));
+            addresses = previewPath is not null ? "192.168.1.10" : string.Join("  ·  ", Dns.GetHostAddresses(Dns.GetHostName()).Where(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a)).Select(a => a.ToString()));
             if (addresses.Length == 0) addresses = "No IPv4 network detected";
             SetWindowText(controls[Address], addresses.Split("  ·  ")[0]);
             SetWindowText(controls[Code], identity?.Invitation ?? "Preview only");
@@ -187,7 +185,7 @@ internal sealed partial class MainWindow : IDisposable
         EnableWindow(controls[Side], controller);
         Caption(Reveal, "Show");
         Caption(Start, controller ? "Start sharing" : "Start listening");
-        message = "";
+        message = previewPath is not null && args.Contains("--preview-error") ? "Peer unavailable. Check its address, listener, and private-network firewall rule." : "";
         if (save && previewPath is null) settings.Save();
         UpdateSetupControls();
         InvalidateRect(window, 0, false);
@@ -227,7 +225,9 @@ internal sealed partial class MainWindow : IDisposable
                 Caption(Reveal, codeVisible ? "Hide" : "Show"); InvalidateRect(controls[Code], 0, true); break;
             case Copy: CopyText(Text(Code)); message = "Pairing code copied. Treat it like a password."; InvalidateRect(window, 0, false); break;
             case ResetPair:
-                await ResetIdentity(); break;
+                if (previewPath is null) await ResetIdentity();
+                else message = "Preview only · no pairing identity is created.";
+                break;
             case Manual: manualSetup = !manualSetup; UpdateSetupControls(); break;
             case NextPeer: SelectNextPeer(); break;
             case ApprovePair: confirmation?.Answer.TrySetResult(true); message = "Verified · connecting both PCs…"; break;
@@ -253,16 +253,16 @@ internal sealed partial class MainWindow : IDisposable
         DiscoverPeers();
         UpdatePairingPolicy();
         TryAutoConnect();
-        bool running = engine.Running;
+        bool running = SessionRunning;
         bool busy = uiBusy || confirmation is not null || pairingServer?.IsPairing == true;
         foreach (int id in new[] { RoleControl, RoleReceive }) EnableControl(id, !busy);
         foreach (int id in new[] { Address, Code, ResetPair, NextPeer, Manual }) EnableControl(id, !busy && !running);
-        EnableControl(Side, !running && controller);
+        EnableControl(Side, !busy && !running && controller);
         EnableControl(Start, !busy);
-        Caption(Start, running ? "Pause sharing" : uiBusy ? "Pairing…" : controller && !manualSetup && selectedPeer is not null && !IsTrusted(selectedPeer) ? "Pair & connect" : controller ? "Start sharing" : "Start receiving");
+        Caption(Start, running ? "Pause sharing" : uiBusy ? "Pairing…" : controller && !manualSetup && selectedPeer is not null && !IsTrusted(selectedPeer) && !previewRemembered ? "Pair & connect" : controller ? "Start sharing" : "Start receiving");
         UpdateSetupControls();
         // Network timers still run, but an unchanged screen does not need repainting.
-        string visualState = $"{controller}|{running}|{engine.Connected}|{engine.ControllingRemote}|{engine.Status}|{engine.Latency:0.0}|{message}|{discoveryError}|{manualSetup}|{settings.RemoteOnRight}|{settings.AutoConnect}|{settings.PeerName}|{selectedPeer?.Info}|{selectedPeer?.Address}|{confirmation?.Prompt}|{captions[Start]}";
+        string visualState = $"{controller}|{running}|{SessionConnected}|{engine.ControllingRemote}|{engine.Status}|{SessionLatency:0.0}|{message}|{discoveryError}|{manualSetup}|{settings.RemoteOnRight}|{settings.AutoConnect}|{settings.PeerName}|{selectedPeer?.Info}|{selectedPeer?.Address}|{nearby.Length}|{confirmation?.Prompt}|{captions[Start]}";
         if (lastVisualState != visualState)
         {
             visualInvalidationCount++;
@@ -320,7 +320,13 @@ internal sealed partial class MainWindow : IDisposable
     }
     private void Box(nint dc, int x, int y, int width, int height, uint color, int radius = 14)
     {
-        var brush = CreateSolidBrush(Rgb((int)color)); var oldBrush = SelectObject(dc, brush); var oldPen = SelectObject(dc, GetStockObject(8));
+        var brush = CreateSolidBrush(Rgb((int)color));
+        if (radius <= 0)
+        {
+            var bounds = new Rect(S(x), S(y), Math.Max(1, S(width)), Math.Max(1, S(height)));
+            FillRect(dc, ref bounds, brush); DeleteObject(brush); return;
+        }
+        var oldBrush = SelectObject(dc, brush); var oldPen = SelectObject(dc, GetStockObject(8));
         RoundRect(dc, S(x), S(y), S(x + width), S(y + height), S(radius), S(radius));
         SelectObject(dc, oldBrush); SelectObject(dc, oldPen); DeleteObject(brush);
     }
@@ -347,62 +353,22 @@ internal sealed partial class MainWindow : IDisposable
             EndPaint(w, ref paint);
         }
     }
-    private void DrawContent(nint w, nint dc)
-    {
-            GetClientRect(w, out var rect); var bg = CreateSolidBrush(Rgb((int)Background)); FillRect(dc, ref rect, bg); DeleteObject(bg);
-            Box(dc, 36, 30, 35, 35, Accent, 10); TextAt(dc, "g", 45, 29, 26, 34, 28, Background, 700);
-            TextAt(dc, "glide", 82, 29, 140, 38, 28, Ink, 650);
-            TextAt(dc, "TWO PCs. ONE FLOW.", 36, 87, 500, 23, 11, Accent, 650);
-            TextAt(dc, "Your desk. One cursor.", 34, 111, 680, 44, 32, Ink, 600);
-            TextAt(dc, "PORTABLE  /  v0.3", 708, 38, 160, 26, 11, Muted, 500, 2 | 0x20);
-            bool connected = engine.Connected;
-            Box(dc, 728, 111, 136, 30, connected ? 0x1d3c36u : Surface, 20);
-            TextAt(dc, connected ? "●  Connected" : engine.Running ? "●  Connecting" : "○  Standby", 740, 116, 118, 22, 12, connected ? Accent : Muted, 500);
-            bool remoteFirst = controller && !settings.RemoteOnRight;
-            ScreenCard(dc, 36, remoteFirst, connected); ScreenCard(dc, 492, !remoteFirst, connected);
-            TextAt(dc, "↔", 427, 265, 46, 42, 29, connected ? Accent : Muted, 400, 1 | 0x20);
-            TextAt(dc, controller ? "Move across the adjoining edge to switch PCs." : "Use the mouse and keyboard attached to your other PC.", 36, 355, 830, 25, 13, Muted);
-            DrawSetup(dc);
-            string detail = message.Length > 0 ? message : discoveryError.Length > 0 ? discoveryError : engine.Status;
-            TextAt(dc, detail, 38, 646, 822, 39, 12, message.Length > 0 ? 0xffcc8a : Muted, 400, 0x10);
-            TextAt(dc, "Ctrl + Alt + F12", 36, 703, 137, 24, 12, Ink, 600);
-            TextAt(dc, "returns control & stops sharing", 177, 703, 260, 24, 12, Muted);
-            TextAt(dc, connected && engine.Latency > 0 ? $"{engine.Latency:0.0} ms RTT" : "LAN ONLY", 466, 703, 165, 24, 11, connected ? Accent : Muted, 500);
-    }
-    private void DrawManualSetup(nint dc)
-    {
-            bool connected = engine.Connected;
-            TextAt(dc, controller ? "OTHER PC'S ADDRESS" : "THIS PC'S ADDRESS", 58, 446, 270, 19, 10, Muted, 600);
-            TextAt(dc, controller ? "PAIRING CODE FROM THE OTHER PC" : "YOUR PRIVATE PAIRING CODE", 358, 446, 460, 19, 10, Muted, 600);
-            Box(dc, 50, 465, 281, 39, Field, 8); Box(dc, 350, 465, 394, 39, Field, 8);
-            TextAt(dc, controller ? "On the other PC, choose “This PC receives” and start listening.\nCopy its address and pairing code here." : "Paste this address and code into your controlling PC.\nAllow Glide on private networks if Windows asks.", 58, 518, controller ? 755 : 510, 47, 13, Muted, 400, 0x10);
-            TextAt(dc, engine.ControllingRemote ? "Controlling your second PC" : connected ? "Secure connection is ready" : "Encrypted · direct over your local network", 296, 585, 542, 24, 13, connected ? Accent : Muted);
-    }
-    private void ScreenCard(nint dc, int x, bool other, bool connected)
-    {
-        Box(dc, x, 230, 372, 113, Surface, 16);
-        bool active = connected && (engine.ControllingRemote == other);
-        Box(dc, x + 20, 252, 65, 47, active ? 0x315e55u : 0x303f51u, 8);
-        Box(dc, x + 25, 257, 55, 35, Field, 3);
-        Box(dc, x + 43, 300, 20, 4, Muted, 2);
-        TextAt(dc, other ? "SECOND PC" : "THIS PC", x + 107, 250, 245, 21, 10, active ? Accent : Muted, 600);
-        TextAt(dc, other ? selectedPeer?.Info.Name ?? (settings.PeerName.Length > 0 ? settings.PeerName : "Your other Windows PC") : Environment.MachineName, x + 107, 274, 245, 28, 17, Ink, 600);
-        TextAt(dc, other ? connected ? "Paired and connected" : "Waiting to connect" : controller ? "Mouse + keyboard" : "Receives mouse + keyboard", x + 107, 305, 245, 21, 12, Muted);
-    }
     private void DrawButton(DrawItem item)
     {
         int id = (int)item.Id;
         bool selected = id is Start or ApprovePair || (id == RoleControl && controller) || (id == RoleReceive && !controller);
         bool disabled = (item.State & 4) != 0, pressed = (item.State & 1) != 0;
-        uint color = selected ? pressed ? 0x4abda0u : Accent : pressed ? 0x304154u : Surface;
+        bool textOnly = id is Manual or NextPeer;
+        uint color = selected ? pressed ? 0x4abda0u : Accent : pressed ? 0x304154u : id is RoleControl or RoleReceive ? Field : Surface;
         if (disabled) color = Surface;
-        var backing = CreateSolidBrush(Rgb((int)(id is Start or Reveal or Copy or ResetPair or Manual or NextPeer or ApprovePair or RejectPair ? Surface : Background)));
+        var backing = CreateSolidBrush(Rgb((int)(id is Side or Hide or Quit ? Background : Surface)));
         var bounds = item.Rect; FillRect(item.Dc, ref bounds, backing); DeleteObject(backing);
-        var brush = CreateSolidBrush(Rgb((int)color)); var oldBrush = SelectObject(item.Dc, brush); var oldPen = SelectObject(item.Dc, GetStockObject(8));
-        RoundRect(item.Dc, item.Rect.Left, item.Rect.Top, item.Rect.Right, item.Rect.Bottom, S(9), S(9));
-        SelectObject(item.Dc, oldBrush); SelectObject(item.Dc, oldPen); DeleteObject(brush);
-        var oldFont = SelectObject(item.Dc, Font(13, selected ? 600 : 500)); SetBkMode(item.Dc, 1);
-        SetTextColor(item.Dc, Rgb((int)(disabled ? Muted : selected ? Background : Ink)));
+        if (!textOnly)
+        {
+            Panel(item.Dc, 0, 0, (int)Math.Round(item.Rect.Width / scale), (int)Math.Round(item.Rect.Height / scale), color, 9);
+        }
+        var oldFont = SelectObject(item.Dc, Font(14, selected ? 600 : 500)); SetBkMode(item.Dc, 1);
+        SetTextColor(item.Dc, Rgb((int)(disabled ? Muted : selected ? Background : textOnly ? Accent : Ink)));
         string text = captions.GetValueOrDefault(id, "");
         var rect = item.Rect; DrawText(item.Dc, text, text.Length, ref rect, 1 | 4 | 0x20 | 0x800);
         if ((item.State & 16) != 0) { rect.Left += S(3); rect.Top += S(3); rect.Right -= S(3); rect.Bottom -= S(3); DrawFocusRect(item.Dc, ref rect); }
