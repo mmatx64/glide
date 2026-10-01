@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Source version **0.3.1** adds the compact desk/session layout. This is preview software; the latest pairing changes still need two-PC testing.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.3.1** adds the compact desk/session layout. This is preview software; the latest pairing changes still need two-PC testing.
 
-**[Download the published v0.3.0 release for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.3.0/Glide-0.3.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.3.0)
+**[Download Glide v0.3.1 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.3.1/Glide-0.3.1-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.3.1)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
