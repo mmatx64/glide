@@ -11,6 +11,9 @@ internal sealed class InputWorker : IDisposable
     private readonly ManualResetEventSlim ready = new();
     private readonly ConcurrentQueue<Action> commands = new();
     private readonly Inbox inbound = new();
+    private readonly (Connection Peer, Packet Packet)[] incomingBatch = new (Connection, Packet)[32];
+    internal delegate uint InputSender(ReadOnlySpan<Input> inputs);
+    private readonly InputSender sendInput;
     private readonly HookProc mouseProc, keyProc;
     private readonly bool[] physical = new bool[256], suppressed = new bool[768];
     private readonly Dictionary<int, Packet> heldKeys = new();
@@ -32,8 +35,9 @@ internal sealed class InputWorker : IDisposable
     private const nuint Tag = 0x474c4944;
     private const uint Work = WM_APP + 10, Incoming = WM_APP + 11;
 
-    internal InputWorker()
+    internal InputWorker(InputSender? sendInput = null)
     {
+        this.sendInput = sendInput ?? SendNativeInput;
         mouseProc = Mouse; keyProc = Keyboard;
         thread = new Thread(Loop) { IsBackground = true, Name = "Glide input" };
         thread.Start(); ready.Wait();
@@ -52,8 +56,9 @@ internal sealed class InputWorker : IDisposable
     internal void Emergency() => Post(Panic);
     internal void Receive(Connection peer, Packet packet)
     {
-        if (!inbound.TryAdd(peer, packet)) return;
-        if (!PostThreadMessage(threadId, Incoming, 0, 0)) peer.Stop();
+        if (Volatile.Read(ref disposing) != 0) { peer.Stop(); return; }
+        if (!inbound.TryAdd(peer, packet, out bool wake)) return;
+        if (wake && !PostThreadMessage(threadId, Incoming, 0, 0)) peer.Stop();
     }
     private void Post(Action action)
     {
@@ -80,7 +85,7 @@ internal sealed class InputWorker : IDisposable
                 try
                 {
                     if (message.Id == Work) { while (commands.TryDequeue(out var command)) command(); }
-                    else if (message.Id == Incoming) { if (inbound.TryTake(out var item) && ReferenceEquals(item.Peer, connection)) Apply(item.Packet); }
+                    else if (message.Id == Incoming) DrainIncoming();
                     else if (message.Id == WM_HOTKEY) Panic();
                     else if (message.Id == WM_TIMER)
                     {
@@ -105,6 +110,41 @@ internal sealed class InputWorker : IDisposable
             UnregisterHotKey(0, 1);
         }
     }
+    private void DrainIncoming()
+    {
+        int count = inbound.TakeBatch(incomingBatch);
+        try
+        {
+            Span<Input> wheels = stackalloc Input[incomingBatch.Length];
+            for (int i = 0; i < count;)
+            {
+                var item = incomingBatch[i++];
+                if (!ReferenceEquals(item.Peer, connection) || !item.Peer.IsAlive) continue;
+                if (!controller && receiving && IsWheel(item.Packet))
+                {
+                    int length = 0;
+                    wheels[length++] = BuildMouseInput(item.Packet.A, item.Packet.B);
+                    while (i < count && ReferenceEquals(incomingBatch[i].Peer, item.Peer) && IsWheel(incomingBatch[i].Packet))
+                    {
+                        var packet = incomingBatch[i++].Packet;
+                        wheels[length++] = BuildMouseInput(packet.A, packet.B);
+                    }
+                    // Separate INPUT records retain small deltas, reversals and
+                    // wheel axes. Do not sum them or cross a key/button/move barrier.
+                    Inject(wheels[..length], true);
+                }
+                else Apply(item.Packet);
+            }
+        }
+        finally
+        {
+            Array.Clear(incomingBatch, 0, count);
+            // Yield to Work/hotkey messages after at most 32 packets. No timer
+            // or wait to fill a batch, and at most one outstanding input wake.
+            if (inbound.CompleteBatch() && !PostThreadMessage(threadId, Incoming, 0, 0)) connection?.Stop();
+        }
+    }
+    private static bool IsWheel(Packet packet) => packet.Kind == MessageKind.Button && packet.A is 2048 or 4096;
     private nint Mouse(int code, nuint wParam, nint lParam)
     {
         if (code < 0) return CallNextHookEx(0, code, wParam, lParam);
@@ -249,13 +289,13 @@ internal sealed class InputWorker : IDisposable
             default: throw new InvalidDataException("Unexpected input message.");
         }
     }
-    private static void Move(int x, int y)
+    private void Move(int x, int y)
     {
         if (x is < 0 or > 65535 || y is < 0 or > 65535) throw new InvalidDataException("Invalid cursor position.");
         var input = new Input { Type = 0, Data = new InputUnion { Mouse = new MouseInput { X = x, Y = y, Flags = 0xc001, Extra = Tag } } };
         Inject(input, true);
     }
-    private static void InjectKey(Packet packet, bool required)
+    private void InjectKey(Packet packet, bool required)
     {
         Inject(BuildKeyInput(packet), required);
     }
@@ -273,15 +313,21 @@ internal sealed class InputWorker : IDisposable
         { Vk = scanCode ? (ushort)0 : (ushort)packet.A, Scan = (ushort)packet.B,
             Flags = (uint)packet.C | (scanCode ? 8u : 0u), Extra = Tag } } };
     }
-    private static void InjectMouse(int flags, int data, bool required)
+    internal static Input BuildMouseInput(int flags, int data) =>
+        new() { Data = new InputUnion { Mouse = new MouseInput { Flags = (uint)flags, Data = unchecked((uint)data), Extra = Tag } } };
+    private void InjectMouse(int flags, int data, bool required)
     {
-        var input = new Input { Data = new InputUnion { Mouse = new MouseInput { Flags = (uint)flags, Data = unchecked((uint)data), Extra = Tag } } };
-        Inject(input, required);
+        Inject(BuildMouseInput(flags, data), required);
     }
-    private static void Inject(Input input, bool required)
+    private void Inject(Input input, bool required) => Inject(new ReadOnlySpan<Input>(in input), required);
+    private void Inject(ReadOnlySpan<Input> inputs, bool required)
     {
-        if (SendInput(1, in input, Marshal.SizeOf<Input>()) != 1 && required)
+        if (sendInput(inputs) != inputs.Length && required)
             throw new InvalidOperationException("Windows blocked input. Elevated apps and secure desktops require local control.");
+    }
+    private static unsafe uint SendNativeInput(ReadOnlySpan<Input> inputs)
+    {
+        fixed (Input* pointer = inputs) return SendInput((uint)inputs.Length, pointer, sizeof(Input));
     }
     public void Dispose()
     {

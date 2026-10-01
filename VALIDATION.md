@@ -1,5 +1,13 @@
 # Glide validation — October 1, 2026
 
+## v0.6.1: remote wheel receiver dispatch
+
+- Replaced per-packet Windows input wakes with one outstanding wake and drains of at most 32 already-queued packets. Consecutive wheel packets use one native `SendInput` array with a separate INPUT record for every delta. No delta aggregation, batching timer, wire-protocol or sender behavior change. Both axes, direction reversals and sub-120 deltas retain exact order; position/key/button/release and peer-identity changes remain barriers.
+- **82 core checks passed**, including a 192-wheel burst in six drains, 10,000 concurrent receiver arrivals with no lost wake or reordered events, and existing overflow/session/authentication/update checks.
+- Receiver-loop tests use real TLS-authenticated connection identities and the production hook/message-loop thread with a mock injection delegate. The mixed burst preserves **193 wheel records in 12 injection calls**, maximum 32 records per call, with small deltas, reversals, axes, button/key/position barriers, stale-peer rejection and Release/reactivation. Isolated delivery, partial-injection failure cleanup and emergency preemption of a 192-wheel backlog pass. Tests inject no input into the user's desktop.
+- Full `build.ps1 -SkipLocalCopy` passed: Release NativeAOT publish, all 16 native smoke checks and the three offline service-cleanup scenarios. The executable reports version `0.6.1.0`. Packaged `dist/Glide-0.6.1-win-x64.zip` with a pristine INI and `dist/SHA256SUMS-0.6.1.txt`; existing running apps, installed service and local settings were left intact.
+- **Two-PC acceptance remains outstanding:** repeat fast scrolling, abrupt stops, reversals, horizontal/high-resolution wheels, browser smooth scrolling on/off, and portable/service mode in the affected applications. Reduced dispatch overhead is verified; elimination of the reported end-to-end lag is not yet confirmed. See [BUG-001](ISSUES.md).
+
 ## v0.6.0: user-initiated updates and wheel-lag tracking
 
 - Added **Check for updates** using the latest public stable GitHub release, with a user-confirmed administrator handoff. The helper independently fetches release metadata, enforces the repository/version/asset naming, bounds download size, checks GitHub's SHA-256 digest, and rejects unexpected ZIP contents before requesting shutdown. No credentials or GitHub token are stored.

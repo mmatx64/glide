@@ -26,6 +26,7 @@ internal static class NativeTests
             lines.Add("PASS service ABI, token/logon queries, bounded event names, event lifecycle, and untrusted install-path rejection");
             KeypadTest();
             lines.Add("PASS keypad digits/decimal/navigation, key-up flags, and Windows translation with either Num Lock state (no input injected)");
+            WheelTests.Run(lines).GetAwaiter().GetResult();
             WindowTextTest();
             lines.Add("PASS Unicode window title and edit text round-trip");
             string path = System.IO.Path.Combine(directory, "test.ini");

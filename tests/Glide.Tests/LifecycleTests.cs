@@ -25,8 +25,63 @@ internal static class LifecycleTests
             check(inbox.TryAdd(firstClient, new(MessageKind.Key, 65, 30)), "inbound queue accepts an event before input attachment");
             check(!inbox.TryAdd(firstClient, new(MessageKind.Key, 65, 30, 2)) && !firstClient.IsAlive && otherClient.IsAlive,
                 "inbound overflow closes its sender without closing another session");
-            check(inbox.TryTake(out var item) && ReferenceEquals(item.Peer, firstClient) && !inbox.TryTake(out _), "inbound queue preserves the session identity and releases capacity");
+            var batch = new (Connection Peer, Packet Packet)[1];
+            check(inbox.TakeBatch(batch) == 1 && ReferenceEquals(batch[0].Peer, firstClient) && inbox.TakeBatch(batch) == 0 && !inbox.CompleteBatch(), "inbound queue preserves the session identity and releases capacity");
             check(!inbox.TryAdd(firstClient, new(MessageKind.Key, 65, 30, 2)), "closed sender cannot refill the input queue");
+
+            var burstInbox = new Inbox();
+            int wakes = 0;
+            var burst = Enumerable.Range(0, 192).Select(i => new Packet(MessageKind.Button, i % 3 == 0 ? 4096 : 2048, i % 2 == 0 ? 1 : -120)).ToArray();
+            foreach (var packet in burst)
+            {
+                if (!burstInbox.TryAdd(otherClient, packet, out bool wake)) throw new Exception("Burst overflowed.");
+                if (wake) wakes++;
+            }
+            var receivedBurst = new List<Packet>();
+            var burstBatch = new (Connection Peer, Packet Packet)[32];
+            int drains = 0;
+            do
+            {
+                int length = burstInbox.TakeBatch(burstBatch); drains++;
+                receivedBurst.AddRange(burstBatch.Take(length).Select(item => item.Packet));
+            } while (burstInbox.CompleteBatch());
+            check(wakes == 1 && drains == 6 && receivedBurst.SequenceEqual(burst),
+                "192 wheel events use one initial wake and six bounded drains without losing deltas, axes or reversals");
+
+            // Exercise both sides of the enqueue/complete race with a real producer
+            // and consumer. Capacity reservations keep this test below overflow.
+            var racingInbox = new Inbox();
+            using var slots = new SemaphoreSlim(256, 256);
+            using var notifications = new SemaphoreSlim(0);
+            var consumer = Task.Run(async () =>
+            {
+                var packets = new (Connection Peer, Packet Packet)[32];
+                int expected = 0;
+                while (expected < 10000)
+                {
+                    await notifications.WaitAsync(ct);
+                    int length = racingInbox.TakeBatch(packets);
+                    for (int i = 0; i < length; i++)
+                    {
+                        if (packets[i].Packet.B != expected++ || !ReferenceEquals(packets[i].Peer, otherClient))
+                            throw new Exception("Receiver reordered input.");
+                        slots.Release();
+                    }
+                    await Task.Yield(); // arrivals during injection must not lose their wake
+                    if (racingInbox.CompleteBatch()) notifications.Release();
+                }
+            });
+            for (int i = 0; i < 10000; i++)
+            {
+                await slots.WaitAsync(ct);
+                if (!racingInbox.TryAdd(otherClient, new(MessageKind.Button, 2048, i), out bool wake))
+                    throw new Exception("Reserved input queue overflowed.");
+                if (wake) notifications.Release();
+                if (i % 7 == 0) await Task.Yield();
+            }
+            await consumer.WaitAsync(ct);
+            check(!racingInbox.CompleteBatch() && otherClient.IsAlive,
+                "10000 concurrent receiver arrivals retain order and never lose a wake during batch completion");
 
             var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var writers = Enumerable.Range(0, 4).Select(_ => Task.Run(async () =>

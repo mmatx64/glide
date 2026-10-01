@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.6.0** adds user-initiated GitHub updates with verified downloads, administrator app/service replacement, settings preservation, and rollback. The optional service starts Glide elevated at sign-in for credential dialogs and administrator applications on the normal desktop. This is preview software; service mode still needs two-PC testing.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.6.1** reduces receiver dispatch and injection overhead during fast remote scrolling. User-initiated GitHub updates include verified downloads, administrator app/service replacement, settings preservation, and rollback. The optional service starts Glide elevated at sign-in for credential dialogs and administrator applications on the normal desktop. This is preview software; service mode still needs two-PC testing.
 
-**[Download Glide v0.6.0 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.6.0/Glide-0.6.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.6.0)
+**[Download Glide v0.6.1 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.6.1/Glide-0.6.1-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.6.1)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -33,7 +33,7 @@ The updater only handles public releases outside GitHub's prerelease channel, wi
 
 Service mode automatically starts Glide elevated at sign-in, so normal-desktop Windows credential dialogs and administrator applications can receive shared input without relaunching Glide as administrator. Install it on the receiving PC, or on both PCs if you reverse roles. It supports **one enrolled Windows administrator account and the active physical console session** per PC. It does not control lock screens, UAC secure desktops, Ctrl+Alt+Delete, other users' sessions, or RDP sessions.
 
-1. Quit the portable Glide instance. Extract the v0.6.0 package into a writable folder.
+1. Quit the portable Glide instance. Extract the v0.6.1 package into a writable folder.
 2. From PowerShell in that folder, run `.\Install-Service.ps1`. Approve the one-time Windows administrator prompt **as the same Windows account that will use Glide**. To retain a portable pairing, instead run `.\Install-Service.ps1 -SettingsPath 'C:\path\to\existing\Glide.ini'`. A first installation otherwise imports the blank INI beside the installer. Updates preserve the installed settings.
 3. Open **Glide (service)** from the Start menu, or use its tray icon. No administrator prompt is needed for normal reopening. The title says **SERVICE**. A paired app starts hidden at sign-in; a fresh installation opens for setup. For a fresh pairing, initiate **Pair & connect from the service PC** and confirm the code there, then reverse roles if needed. An unpaired service session does not accept unattended incoming first-pair requests. If installing service mode on both unpaired PCs, pair them in portable mode first, then import each PC's own INI during installation.
 
@@ -87,6 +87,7 @@ Manual pairing codes remain private credentials: anyone with the code and networ
 - UI polling repaints only when displayed state changes. Buffered window painting and unchanged-control checks avoid the previous half-second refresh flicker.
 - Adjacent queued absolute mouse positions collapse into the latest position. Key/button transitions remain ordered barriers, so a click cannot overtake its position.
 - A preallocated queue sends up to 32 already-queued events in one TLS write. There is no batching timer or wait to fill a batch. This reduces allocation and encryption/write overhead during bursts; TLS authentication, encryption, event order, and the 256-event queue limit remain in place.
+- The receiver drains up to 32 already-queued packets per wake and injects consecutive wheel events in one `SendInput` call. Each wheel delta remains a separate INPUT record, including high-resolution deltas and direction/axis changes. Position, key, button and release events remain ordering barriers. Input wakes cannot pile up one per packet, and each drain yields to queued emergency/stop commands.
 - A bounded queue fails the session rather than dropping a key-up or button-up. A silent-peer watchdog disconnects after approximately 1.6–2 seconds and releases tracked remote input.
 - The client reconnects in the background after ordinary connection failures. Pause and emergency stop disable reconnecting until you press Start again.
 
@@ -101,7 +102,7 @@ These changes target plausible causes of handoff lag. They cannot eliminate Wi-F
 - Portable mode cannot control higher-privilege applications unless launched elevated. Service mode supports those windows on the normal desktop. Windows secure desktops, UAC elevation prompts, lock screens, and Ctrl+Alt+Delete still require local control. If Windows blocks injection, Glide disconnects.
 - Use on trusted local networks. Discovery broadcasts every two seconds and removes absent peers after seven seconds; it is bounded to 32 peers. There is no WAN relay. Networking is IPv4. Complex multi-adapter, VPN, and guest-network discovery still needs physical validation.
 - Unsigned development executable; there is no code-signing certificate. Updates in v0.6.0 are explicitly initiated by the user.
-- Fast/accelerated remote wheel scrolling has a reported delay; slow scrolling appears normal. Tracked as [BUG-001](https://github.com/mmatx64/glide/blob/main/ISSUES.md); buffering is not yet a confirmed cause.
+- v0.6.1 addresses fast-wheel receiver backlog with bounded dispatch and wheel injection batches. Automated checks preserve exact events and stop behavior; elimination of the reported delay still needs two-PC acceptance in the affected applications. Tracked as [BUG-001](https://github.com/mmatx64/glide/blob/main/ISSUES.md).
 
 ## Build and verify
 

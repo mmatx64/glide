@@ -1,26 +1,46 @@
-using System.Collections.Concurrent;
-
 namespace Glide.Core;
 
 public sealed class Inbox(int capacity = 256)
 {
-    private readonly ConcurrentQueue<(Connection Peer, Packet Packet)> queue = new();
+    private readonly Queue<(Connection Peer, Packet Packet)> queue = new();
     private readonly int capacity = capacity > 0 ? capacity : throw new ArgumentOutOfRangeException(nameof(capacity));
-    private int count;
-    public bool TryAdd(Connection peer, Packet packet)
+    private bool scheduled;
+    public bool TryAdd(Connection peer, Packet packet) => TryAdd(peer, packet, out _);
+    public bool TryAdd(Connection peer, Packet packet, out bool wake)
     {
+        wake = false;
         if (!peer.IsAlive) return false;
-        if (Interlocked.Increment(ref count) > capacity)
+        lock (queue)
         {
-            Interlocked.Decrement(ref count);
-            // Attachment belongs to the input thread; always stop this sender.
-            peer.Stop(); return false;
+            if (queue.Count < capacity)
+            {
+                queue.Enqueue((peer, packet));
+                wake = !scheduled; scheduled = true;
+                return true;
+            }
         }
-        queue.Enqueue((peer, packet)); return true;
+        // Attachment belongs to the input thread; always stop this sender.
+        // Stop outside the queue lock to avoid a connection/queue lock inversion.
+        peer.Stop(); return false;
     }
-    public bool TryTake(out (Connection Peer, Packet Packet) item)
+    public int TakeBatch(Span<(Connection Peer, Packet Packet)> destination)
     {
-        if (!queue.TryDequeue(out item)) return false;
-        Interlocked.Decrement(ref count); return true;
+        if (destination.IsEmpty) throw new ArgumentException("A batch needs at least one slot.", nameof(destination));
+        lock (queue)
+        {
+            int length = Math.Min(destination.Length, queue.Count);
+            for (int i = 0; i < length; i++) destination[i] = queue.Dequeue();
+            return length;
+        }
+    }
+    // Keep the wake reservation while the consumer applies a batch. Arrivals
+    // during injection either use its continuation or schedule a fresh wake.
+    public bool CompleteBatch()
+    {
+        lock (queue)
+        {
+            scheduled = queue.Count != 0;
+            return scheduled;
+        }
     }
 }

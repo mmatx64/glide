@@ -71,7 +71,7 @@ internal static class Native
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] internal static extern nint SetThreadDpiAwarenessContext(nint context);
     [DllImport("user32.dll")] internal static extern bool SetProcessDpiAwarenessContext(nint context);
-    [DllImport("user32.dll")] internal static extern uint SendInput(uint count, in Input input, int size);
+    [DllImport("user32.dll")] internal static extern unsafe uint SendInput(uint count, Input* inputs, int size);
     [DllImport("user32.dll")] internal static extern bool RegisterHotKey(nint w, int id, uint modifiers, uint vk);
     [DllImport("user32.dll")] internal static extern bool UnregisterHotKey(nint w, int id);
     [DllImport("user32.dll")] internal static extern nuint SetTimer(nint w, nuint id, uint interval, nint proc);
