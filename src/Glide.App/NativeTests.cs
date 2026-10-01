@@ -15,6 +15,8 @@ internal static class NativeTests
             if (Marshal.SizeOf<Native.Input>() != 40) throw new Exception("x64 INPUT layout is wrong.");
             if (Marshal.SizeOf<Native.MouseHook>() != 32 || Marshal.SizeOf<Native.KeyHook>() != 24) throw new Exception("Hook layout is wrong.");
             lines.Add("PASS Win32 x64 input structures");
+            ServiceTests();
+            lines.Add("PASS service ABI, token/logon queries, bounded event names, event lifecycle, and untrusted install-path rejection");
             KeypadTest();
             lines.Add("PASS keypad digits/decimal/navigation, key-up flags, and Windows translation with either Num Lock state (no input injected)");
             WindowTextTest();
@@ -53,6 +55,48 @@ internal static class NativeTests
         catch (Exception ex)
         {
             lines.Add("FAIL " + ex); File.WriteAllLines(System.IO.Path.Combine(directory, "results.txt"), lines); return 1;
+        }
+    }
+    private static void ServiceTests()
+    {
+        if (MainWindow.AllowIncomingPairing(true, true, false)
+            || MainWindow.AllowIncomingPairing(false, true, true)
+            || MainWindow.AllowIncomingPairing(false, false, false)
+            || !MainWindow.AllowIncomingPairing(true, true, true)
+            || !MainWindow.AllowIncomingPairing(true, false, false))
+            throw new Exception("Service pairing must require local enrollment or an existing trusted peer and honor Pause.");
+        if (Marshal.SizeOf<ServiceNative.StartupInfo>() != 104 || Marshal.SizeOf<ServiceNative.ProcessInfo>() != 24
+            || Marshal.SizeOf<ServiceNative.JobLimits>() != 144 || Marshal.SizeOf<ServiceNative.Status>() != 28
+            || Marshal.SizeOf<ServiceNative.ServiceEntry>() != 16)
+            throw new Exception("Service Win32 ABI layout mismatch.");
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        if (ServiceHost.ReadLogonId(identity.Token) == 0 || ServiceNative.TokenValue<uint>(identity.Token, 12) != System.Diagnostics.Process.GetCurrentProcess().SessionId)
+            throw new Exception("Session token metadata mismatch.");
+        string stopName = "Global\\Glide.Service.Stop." + Guid.NewGuid().ToString("N");
+        if (!ServiceSession.ValidEvent(stopName, "Stop") || ServiceSession.ValidEvent(stopName, "Show")
+            || ServiceSession.ValidEvent(stopName + " --unexpected", "Stop"))
+            throw new Exception("Service event name validation failed.");
+        string eventName = "Local\\Glide.Service.Test." + Guid.NewGuid().ToString("N");
+        using (var signal = new ServiceEvent(eventName, identity.User!.Value, true))
+        {
+            if (signal.Poll()) throw new Exception("Service event began signaled.");
+            signal.Signal();
+            if (!signal.Poll() || signal.Poll()) throw new Exception("Service wakeup did not auto-reset.");
+            bool rejected = false;
+            try { using var duplicate = new ServiceEvent(eventName, identity.User.Value, true); }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { rejected = true; }
+            if (!rejected) throw new Exception("Service accepted a pre-existing event.");
+        }
+        using (var stop = new ServiceEvent(eventName, identity.User!.Value, false, true))
+        {
+            stop.Signal();
+            if (!stop.Poll() || !stop.Poll()) throw new Exception("Service shutdown signal was lost.");
+        }
+        if (!string.Equals(Environment.ProcessPath, ServiceHost.Executable, StringComparison.OrdinalIgnoreCase))
+        {
+            bool rejected = false;
+            try { ServiceHost.ValidateInstallLocation(); } catch (InvalidOperationException) { rejected = true; }
+            if (!rejected) throw new Exception("Service accepted an unprotected executable path.");
         }
     }
     private static void KeypadTest()

@@ -13,13 +13,27 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.SequenceEqual(new[] { "--service" })) return ServiceHost.Run();
+        if (args.SequenceEqual(new[] { "--service-test" })) return ServiceHost.Run(true);
+        if (args.SequenceEqual(new[] { "--open-service" }) || (args.Length == 0 &&
+            string.Equals(Environment.ProcessPath, ServiceHost.Executable, StringComparison.OrdinalIgnoreCase)))
+            return ServiceHost.OpenInstalled();
         SetProcessDpiAwarenessContext(-4);
         if (args.Contains("--self-test")) return NativeTests.Run();
+        if (args.Contains("--service-probe"))
+        {
+            try { using var serviceProbe = new ServiceSession(args); serviceProbe.RunProbe(); return 0; }
+            catch (Exception ex) { ServiceHost.Log("Probe failed: " + ex.Message); return 1; }
+        }
         // Rendering diagnostics have no networking or input hooks and can coexist with Glide.
         bool diagnostic = args.Contains("--preview") || args.Contains("--profile");
         using var mutex = new Mutex(true, diagnostic ? null : "Local\\Glide.Portable.Desktop", out bool first);
-        if (!first) { MessageBox(0, "Glide is already running. Open it from the system tray.", "Glide", 0x40); return 0; }
-        try { using var window = new MainWindow(args); return window.Run(); }
+        if (!first) { if (args.Contains("--service-user")) return 2; MessageBox(0, "Glide is already running. Open it from the system tray.", "Glide", 0x40); return 0; }
+        try
+        {
+            using var service = args.Contains("--service-user") ? new ServiceSession(args) : null;
+            using var window = new MainWindow(args, service); return window.Run();
+        }
         catch (Exception ex) { MessageBox(0, ex.Message, "Glide could not start", 0x10); return 1; }
     }
 }
@@ -38,6 +52,7 @@ internal sealed partial class MainWindow : IDisposable
     private readonly Dictionary<int, bool> controlVisibility = new();
     private readonly Dictionary<(int, int), nint> fonts = new();
     private readonly string[] args;
+    private readonly ServiceSession? service;
     private readonly nint fieldBrush = CreateSolidBrush(Rgb((int)Field));
     private PairingIdentity? identity;
     private nint window;
@@ -60,15 +75,15 @@ internal sealed partial class MainWindow : IDisposable
     private int paintCount;
     private int refreshCount, visualInvalidationCount;
 
-    internal MainWindow(string[] args)
+    internal MainWindow(string[] args, ServiceSession? service = null)
     {
-        this.args = args;
+        this.args = args; this.service = service;
         proc = Procedure;
         int index = Array.IndexOf(args, "--preview");
         if (index >= 0 && index + 1 < args.Length) previewPath = System.IO.Path.GetFullPath(args[index + 1]);
         index = Array.IndexOf(args, "--profile");
         if (index >= 0 && index + 1 < args.Length) profilePath = System.IO.Path.GetFullPath(args[index + 1]);
-        settings = new Settings(loadFromDisk: previewPath is null && profilePath is null);
+        settings = new Settings(service is null ? null : ServiceHost.SettingsPath, loadFromDisk: previewPath is null && profilePath is null);
         controller = settings.Role != "Receiver";
         if (args.Contains("--receiver-preview")) controller = false;
         if (previewPath is not null) ConfigurePreview();
@@ -81,7 +96,7 @@ internal sealed partial class MainWindow : IDisposable
         var wc = new WindowClass { Size = (uint)Marshal.SizeOf<WindowClass>(), Proc = proc,
             Instance = GetModuleHandle(null), Cursor = LoadCursor(0, 32512), Icon = icon, Name = "Glide.Main" };
         if (RegisterClassEx(ref wc) == 0) throw new InvalidOperationException("Could not register the app window.");
-        window = CreateWindowEx(0, wc.Name, "Glide  |  PORTABLE / v0.4.0", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
+        window = CreateWindowEx(0, wc.Name, service is null ? "Glide  |  PORTABLE / v0.5.0" : "Glide  |  SERVICE / v0.5.0", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
         if (window == 0) throw new InvalidOperationException("Could not create the app window.");
         SynchronizationContext.SetSynchronizationContext(new WindowContext(this));
         FitWindow(GetDpiForWindow(window) / 96.0);
@@ -100,7 +115,7 @@ internal sealed partial class MainWindow : IDisposable
         if (previewPath is null && profilePath is null) trayAdded = Shell_NotifyIcon(0, ref tray);
         taskbarCreated = RegisterWindowMessage("TaskbarCreated");
         SetTimer(window, 1, 500, 0);
-        ShowWindow(window, 5); UpdateWindow(window);
+        ShowWindow(window, service is not null && settings.PairingCode.Length > 0 ? 0 : 5); UpdateWindow(window);
         if (previewPath is null && profilePath is null) StartNetworking();
         Refresh();
         if (previewPath is not null && !args.Contains("--preview-interactive")) SetTimer(window, 2, 700, 0);
@@ -286,6 +301,8 @@ internal sealed partial class MainWindow : IDisposable
                 case 0x133:
                 case 0x138: SetTextColor((nint)p, Rgb((int)Ink)); SetBkColor((nint)p, Rgb((int)Field)); return fieldBrush;
                 case WM_TIMER:
+                    if (service?.Stopping == true) { DestroyWindow(w); return 0; }
+                    if (service?.ShowRequested == true) { ShowWindow(w, 9); SetForegroundWindow(w); UpdatePairingPolicy(); }
                     if (p == 2 && previewPath is not null) { KillTimer(w, 2); Capture(previewPath); DestroyWindow(w); }
                     else if (p == 3 && profilePath is not null)
                     {

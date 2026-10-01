@@ -1,5 +1,5 @@
 param([switch]$SkipTests, [switch]$SkipLocalCopy)
-$releaseVersion = '0.4.0'
+$releaseVersion = '0.5.0'
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
@@ -17,7 +17,7 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $releaseFolder 'Glide.ini'))) {
             Copy-Item -LiteralPath Glide.ini -Destination $releaseFolder
         }
-        Copy-Item -LiteralPath README.md,Allow-PrivateNetwork.ps1 -Destination $releaseFolder -Force
+        Copy-Item -LiteralPath README.md,Allow-PrivateNetwork.ps1,Install-Service.ps1 -Destination $releaseFolder -Force
     }
     if (-not $SkipTests) {
         $nativeTest = Start-Process -FilePath (Join-Path $PSScriptRoot 'artifacts/native/Glide.exe') `
@@ -27,8 +27,8 @@ try {
     # Package a fresh template, never a working folder's potentially private settings.
     $packageFolder = Join-Path $PSScriptRoot 'artifacts/package/Glide'
     New-Item -ItemType Directory -Force $packageFolder | Out-Null
-    Copy-Item -LiteralPath artifacts/native/Glide.exe,Glide.ini,README.md,Allow-PrivateNetwork.ps1 -Destination $packageFolder -Force
-    $packageFiles = 'Glide.exe','Glide.ini','README.md','Allow-PrivateNetwork.ps1' | ForEach-Object { Join-Path $packageFolder $_ }
+    Copy-Item -LiteralPath artifacts/native/Glide.exe,Glide.ini,README.md,Allow-PrivateNetwork.ps1,Install-Service.ps1 -Destination $packageFolder -Force
+    $packageFiles = 'Glide.exe','Glide.ini','README.md','Allow-PrivateNetwork.ps1','Install-Service.ps1' | ForEach-Object { Join-Path $packageFolder $_ }
     $zipPath = "dist/Glide-$releaseVersion-win-x64.zip"
     Compress-Archive -LiteralPath $packageFiles -DestinationPath $zipPath -Force
     $zipChecksum = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant() + "  Glide-$releaseVersion-win-x64.zip"

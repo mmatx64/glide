@@ -82,7 +82,15 @@ internal sealed partial class MainWindow
         return cachedInvitation;
     }
     private bool IsTrusted(NearbyPeer peer) => TrustedInvitation() is { } trusted && trusted.Fingerprint.AsSpan().SequenceEqual(peer.Info.Fingerprint);
-    private void UpdatePairingPolicy() => pairingPolicy = new(settings.AutoConnect, TrustedInvitation()?.Fingerprint, IsWindowVisible(window));
+    private void UpdatePairingPolicy()
+    {
+        var trusted = TrustedInvitation()?.Fingerprint;
+        // An elevated, unpaired service session must never accept first pairing
+        // passively. Enroll by initiating and confirming locally, or import a pairing.
+        pairingPolicy = new(AllowIncomingPairing(settings.AutoConnect, service is not null, trusted is not null), trusted, IsWindowVisible(window));
+    }
+    internal static bool AllowIncomingPairing(bool sharingEnabled, bool serviceMode, bool rememberedPeer) =>
+        sharingEnabled && (!serviceMode || rememberedPeer);
     private void DiscoverPeers()
     {
         if (discovery is null) return;
