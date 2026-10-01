@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 
 namespace Glide.Core;
 
-public sealed class Connection : IDisposable
+public sealed class Connection : IAsyncDisposable
 {
     public const int Port = 24819;
     private readonly TcpClient client;
@@ -15,10 +15,14 @@ public sealed class Connection : IDisposable
     private readonly CancellationTokenSource lifetime = new();
     private long lastReceived = Stopwatch.GetTimestamp();
     private long sent, received, writeOperations;
+    private double roundTripMs;
     private int stopped;
+    private readonly object gate = new();
+    private Task? run;
+    private bool disposed;
     public int RemoteWidth { get; }
     public int RemoteHeight { get; }
-    public double RoundTripMs { get; private set; }
+    public double RoundTripMs => Volatile.Read(ref roundTripMs);
     public long Sent => Interlocked.Read(ref sent);
     public long Received => Interlocked.Read(ref received);
     public long WriteOperations => Interlocked.Read(ref writeOperations);
@@ -88,21 +92,33 @@ public sealed class Connection : IDisposable
 
     public bool Send(Packet packet)
     {
-        if (!IsAlive) return false;
-        if (outbox.TryAdd(packet)) return true;
+        lock (gate)
+        {
+            if (!IsAlive) return false;
+            if (outbox.TryAdd(packet)) return true;
+        }
         // Never silently drop key-up/button-up. Fail the entire session and release input.
-        Dispose();
+        Stop();
         return false;
     }
 
-    public async Task RunAsync(CancellationToken cancellation)
+    public Task RunAsync(CancellationToken cancellation)
+    {
+        lock (gate)
+        {
+            if (!IsAlive) throw new OperationCanceledException("Connection closed.");
+            if (run is not null) throw new InvalidOperationException("Connection is already running.");
+            return run = RunCore(cancellation);
+        }
+    }
+    private async Task RunCore(CancellationToken cancellation)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
         var tasks = new[] { ReadLoop(linked.Token), WriteLoop(linked.Token), Heartbeat(linked.Token) };
         try { await await Task.WhenAny(tasks).ConfigureAwait(false); }
         finally
         {
-            Dispose(); linked.Cancel();
+            Stop(); linked.Cancel();
             try { await Task.WhenAll(tasks).ConfigureAwait(false); } catch { /* Preserve first failure. */ }
         }
     }
@@ -117,7 +133,7 @@ public sealed class Connection : IDisposable
             Interlocked.Increment(ref received);
             if (packet.Kind == MessageKind.Ping) Send(packet with { Kind = MessageKind.Pong });
             else if (packet.Kind == MessageKind.Pong)
-                RoundTripMs = Math.Max(0, Stopwatch.GetElapsedTime(packet.Stamp).TotalMilliseconds);
+                Volatile.Write(ref roundTripMs, Math.Max(0, Stopwatch.GetElapsedTime(packet.Stamp).TotalMilliseconds));
             else Input?.Invoke(packet);
         }
     }
@@ -146,11 +162,24 @@ public sealed class Connection : IDisposable
             Send(new Packet(MessageKind.Ping, Stamp: Stopwatch.GetTimestamp()));
         }
     }
-    public void Dispose()
+    public void Stop()
     {
-        if (Interlocked.Exchange(ref stopped, 1) != 0) return;
-        lifetime.Cancel(); client.Dispose();
-        // RunAsync drains tasks before stream disposal; socket close interrupts pending I/O.
+        lock (gate)
+        {
+            if (Interlocked.Exchange(ref stopped, 1) != 0) return;
+            lifetime.Cancel(); client.Dispose();
+        }
     }
-    public void Finish() { Dispose(); stream.Dispose(); outbox.Dispose(); lifetime.Dispose(); }
+    public async ValueTask DisposeAsync()
+    {
+        Stop();
+        Task? pending;
+        lock (gate) pending = run;
+        if (pending is not null) { try { await pending.ConfigureAwait(false); } catch (Exception) { /* RunAsync reports the session failure. */ } }
+        lock (gate)
+        {
+            if (disposed) return;
+            disposed = true; stream.Dispose(); outbox.Dispose(); lifetime.Dispose();
+        }
+    }
 }

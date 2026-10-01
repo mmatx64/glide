@@ -71,6 +71,7 @@ public sealed class DiscoveryService : IDisposable
     private readonly CancellationTokenSource cancellation = new();
     private readonly Func<Announcement> announce;
     private readonly Task task;
+    private int disposed;
     public PeerDirectory Peers { get; }
     public string? Error { get; private set; }
     public IPEndPoint LocalEndpoint => (IPEndPoint)socket.Client.LocalEndPoint!;
@@ -136,5 +137,11 @@ public sealed class DiscoveryService : IDisposable
         }
         return addresses.Select(address => new IPEndPoint(address, Port)).ToArray();
     }
-    public void Dispose() { cancellation.Cancel(); socket.Dispose(); try { task.Wait(TimeSpan.FromSeconds(2)); } catch (AggregateException) { } }
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        cancellation.Cancel(); socket.Dispose();
+        try { task.GetAwaiter().GetResult(); }
+        finally { cancellation.Dispose(); }
+    }
 }

@@ -257,9 +257,12 @@ internal sealed class ServiceSession : IDisposable
         stop = OpenEvent(0x00100000, false, args[1]); show = OpenEvent(0x00100000, false, args[2]);
         if (stop == 0 || show == 0) { Dispose(); throw new InvalidOperationException("Service session lifetime is unavailable."); }
     }
-    internal static bool ValidEvent(string value, string purpose) =>
-        value.StartsWith("Global\\Glide.Service." + purpose + ".", StringComparison.Ordinal)
-        && Guid.TryParseExact(value[(value.LastIndexOf('.') + 1)..], "N", out _);
+    internal static bool ValidEvent(string value, string purpose)
+    {
+        string prefix = "Global\\Glide.Service." + purpose + ".";
+        return value.Length == prefix.Length + 32 && value.StartsWith(prefix, StringComparison.Ordinal)
+            && Guid.TryParseExact(value.AsSpan(prefix.Length), "N", out _);
+    }
     internal bool Stopping => WaitForSingleObject(stop, 0) == 0;
     internal bool ShowRequested => WaitForSingleObject(show, 0) == 0;
     internal void RunProbe()

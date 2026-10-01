@@ -1,11 +1,12 @@
 param([switch]$SkipTests, [switch]$SkipLocalCopy)
-$releaseVersion = '0.5.0'
+$releaseVersion = '0.5.1'
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
     if (-not $SkipTests) {
         dotnet run --project tests/Glide.Tests -c Release
         if ($LASTEXITCODE -ne 0) { throw 'Core tests failed.' }
+        & (Join-Path $PSScriptRoot 'tests/Glide.Tests/ServiceCleanup.Tests.ps1')
     }
     dotnet publish src/Glide.App/Glide.App.csproj -c Release -r win-x64 --self-contained true -o artifacts/native --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
@@ -30,6 +31,7 @@ try {
     Copy-Item -LiteralPath artifacts/native/Glide.exe,Glide.ini,README.md,Allow-PrivateNetwork.ps1,Install-Service.ps1 -Destination $packageFolder -Force
     $packageFiles = 'Glide.exe','Glide.ini','README.md','Allow-PrivateNetwork.ps1','Install-Service.ps1' | ForEach-Object { Join-Path $packageFolder $_ }
     $zipPath = "dist/Glide-$releaseVersion-win-x64.zip"
+    New-Item -ItemType Directory -Force (Join-Path $PSScriptRoot 'dist') | Out-Null
     Compress-Archive -LiteralPath $packageFiles -DestinationPath $zipPath -Force
     $zipChecksum = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant() + "  Glide-$releaseVersion-win-x64.zip"
     $exeChecksum = (Get-FileHash -LiteralPath artifacts/native/Glide.exe -Algorithm SHA256).Hash.ToLowerInvariant() + '  Glide.exe'

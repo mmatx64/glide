@@ -23,7 +23,7 @@ internal static class OutboxBatchTests
         check(await queue.TakeBatchAsync(batch, ct) == 3 && batch[0].C == 2
             && batch[1].Kind == MessageKind.Button && batch[2].A == 5,
             "partial drain and ring wrap preserve key-up/button/motion order");
-        check((await queue.TakeAsync(ct)).Kind == MessageKind.Release, "partial batch keeps its remainder signaled");
+        check((await TestSupport.TakeOne(queue, ct)).Kind == MessageKind.Release, "partial batch keeps its remainder signaled");
         var pending = queue.TakeBatchAsync(batch, ct).AsTask();
         check(!pending.IsCompleted, "empty batch reader waits without spinning");
         queue.TryAdd(new Packet(MessageKind.Key, 67));

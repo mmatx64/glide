@@ -53,16 +53,6 @@ public sealed class Outbox : IDisposable
             return true;
         }
     }
-    public async ValueTask<Packet> TakeAsync(CancellationToken cancellation)
-    {
-        await ready.WaitAsync(cancellation).ConfigureAwait(false);
-        lock (queue)
-        {
-            var packet = RemoveFirst();
-            if (count > 0) ready.Release();
-            return packet;
-        }
-    }
     // Drain only events that are already queued. Never wait to fill a batch:
     // isolated input still wakes the writer immediately, in its original order.
     public async ValueTask<int> TakeBatchAsync(Memory<Packet> destination, CancellationToken cancellation)

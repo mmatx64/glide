@@ -58,7 +58,7 @@ internal sealed partial class MainWindow : IDisposable
     private nint window;
     private double scale = 1;
     private volatile bool controller;
-    private bool trayAdded, codeVisible, closed;
+    private bool trayAdded, codeVisible, closed, emergencyHotkey;
     private string message = "";
     private string addresses = "";
     private NotifyIcon tray;
@@ -68,6 +68,7 @@ internal sealed partial class MainWindow : IDisposable
         Manual = 112, NextPeer = 113, ApprovePair = 114, RejectPair = 115;
     private string? previewPath;
     private string? profilePath;
+    private bool Diagnostic => previewPath is not null || profilePath is not null;
     private TimeSpan initialCpu;
     private readonly Stopwatch profileWatch = new();
     private nint icon;
@@ -87,7 +88,6 @@ internal sealed partial class MainWindow : IDisposable
         controller = settings.Role != "Receiver";
         if (args.Contains("--receiver-preview")) controller = false;
         if (previewPath is not null) ConfigurePreview();
-        if (previewPath is null && profilePath is null) settings.Save();
     }
     internal int Run()
     {
@@ -96,7 +96,7 @@ internal sealed partial class MainWindow : IDisposable
         var wc = new WindowClass { Size = (uint)Marshal.SizeOf<WindowClass>(), Proc = proc,
             Instance = GetModuleHandle(null), Cursor = LoadCursor(0, 32512), Icon = icon, Name = "Glide.Main" };
         if (RegisterClassEx(ref wc) == 0) throw new InvalidOperationException("Could not register the app window.");
-        window = CreateWindowEx(0, wc.Name, service is null ? "Glide  |  PORTABLE / v0.5.0" : "Glide  |  SERVICE / v0.5.0", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
+        window = CreateWindowEx(0, wc.Name, service is null ? "Glide  |  PORTABLE / v0.5.1" : "Glide  |  SERVICE / v0.5.1", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
         if (window == 0) throw new InvalidOperationException("Could not create the app window.");
         SynchronizationContext.SetSynchronizationContext(new WindowContext(this));
         FitWindow(GetDpiForWindow(window) / 96.0);
@@ -112,11 +112,14 @@ internal sealed partial class MainWindow : IDisposable
         Layout();
         tray = new NotifyIcon { Size = (uint)Marshal.SizeOf<NotifyIcon>(), Window = window, Id = 1,
             Flags = 1 | 2 | 4, Callback = WM_APP + 1, Icon = icon, Tip = "Glide · double-click to open", Info = "", Title = "" };
-        if (previewPath is null && profilePath is null) trayAdded = Shell_NotifyIcon(0, ref tray);
+        if (!Diagnostic) trayAdded = Shell_NotifyIcon(0, ref tray);
         taskbarCreated = RegisterWindowMessage("TaskbarCreated");
         SetTimer(window, 1, 500, 0);
         ShowWindow(window, service is not null && settings.PairingCode.Length > 0 ? 0 : 5); UpdateWindow(window);
-        if (previewPath is null && profilePath is null) StartNetworking();
+        // First pairing has no input worker yet. The UI still needs the global
+        // emergency shortcut; an active worker also recognizes it in its hook.
+        if (!Diagnostic) emergencyHotkey = RegisterHotKey(window, 1, 0x4003, 0x7b);
+        if (!Diagnostic) StartNetworking();
         Refresh();
         if (previewPath is not null && !args.Contains("--preview-interactive")) SetTimer(window, 2, 700, 0);
         if (profilePath is not null)
@@ -124,10 +127,12 @@ internal sealed partial class MainWindow : IDisposable
             initialCpu = Process.GetCurrentProcess().TotalProcessorTime; profileWatch.Start();
             SetTimer(window, 3, 6000, 0);
         }
-        while (GetMessage(out var m, 0, 0, 0))
+        int result;
+        while ((result = GetMessage(out var m, 0, 0, 0)) > 0)
         {
             if (!IsDialogMessage(window, ref m)) { TranslateMessage(ref m); DispatchMessage(ref m); }
         }
+        if (result < 0) throw new InvalidOperationException("Windows message loop failed.");
         return 0;
     }
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string name);
@@ -174,16 +179,16 @@ internal sealed partial class MainWindow : IDisposable
         Place(Manual, 486, 392, 114, 32); Place(NextPeer, 490, 437, 110, 32);
         Place(ApprovePair, 672, 450, 288, 44); Place(RejectPair, 672, 506, 288, 38);
     }
-    private void SwitchRole(bool useController, bool save = true)
+    private void SwitchRole(bool useController, bool remember = true)
     {
-        if (save) Remember();
+        if (remember) Remember();
         controller = useController;
         settings.Role = controller ? "Controller" : "Receiver";
         InvalidateRect(controls[RoleControl], 0, false); InvalidateRect(controls[RoleReceive], 0, false);
         codeVisible = false;
         if (!controller)
         {
-            if (previewPath is null && profilePath is null) identity ??= settings.Identity();
+            if (!Diagnostic) identity ??= settings.Identity();
             addresses = previewPath is not null ? "192.168.1.10" : string.Join("  ·  ", Dns.GetHostAddresses(Dns.GetHostName()).Where(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a)).Select(a => a.ToString()));
             if (addresses.Length == 0) addresses = "No IPv4 network detected";
             SetWindowText(controls[Address], addresses.Split("  ·  ")[0]);
@@ -201,7 +206,6 @@ internal sealed partial class MainWindow : IDisposable
         Caption(Reveal, "Show");
         Caption(Start, controller ? "Start sharing" : "Start listening");
         message = previewPath is not null && args.Contains("--preview-error") ? "Peer unavailable. Check its address, listener, and private-network firewall rule." : "";
-        if (save && previewPath is null) settings.Save();
         UpdateSetupControls();
         InvalidateRect(window, 0, false);
     }
@@ -213,7 +217,6 @@ internal sealed partial class MainWindow : IDisposable
     {
         if (controller && manualSetup) { settings.Host = Text(Address); settings.PairingCode = Text(Code); }
         settings.Role = controller ? "Controller" : "Receiver";
-        if (previewPath is null) settings.Save();
     }
     private void Caption(int id, string text)
     {
@@ -233,14 +236,14 @@ internal sealed partial class MainWindow : IDisposable
         {
             case RoleControl: await ChangeRole(true); break;
             case RoleReceive: await ChangeRole(false); break;
-            case Side: settings.RemoteOnRight = !settings.RemoteOnRight; Remember(); InvalidateRect(window, 0, false); break;
+            case Side: settings.RemoteOnRight = !settings.RemoteOnRight; Remember(); SaveSettings(); InvalidateRect(window, 0, false); break;
             case Reveal:
                 codeVisible = !codeVisible;
                 SendMessage(controls[Code], 0xcc, codeVisible ? 0u : 0x25cfu, 0);
                 Caption(Reveal, codeVisible ? "Hide" : "Show"); InvalidateRect(controls[Code], 0, true); break;
             case Copy: CopyText(Text(Code)); message = "Pairing code copied. Treat it like a password."; InvalidateRect(window, 0, false); break;
             case ResetPair:
-                if (previewPath is null) await ResetIdentity();
+                if (!Diagnostic) await ResetIdentity();
                 else message = "Preview only · no pairing identity is created.";
                 break;
             case Manual: manualSetup = !manualSetup; UpdateSetupControls(); break;
@@ -248,19 +251,26 @@ internal sealed partial class MainWindow : IDisposable
             case ApprovePair: confirmation?.Answer.TrySetResult(true); message = "Verified · connecting both PCs…"; break;
             case RejectPair: confirmation?.Answer.TrySetResult(false); break;
             case Start:
-                if (previewPath is not null) return;
+                if (Diagnostic) return;
                 await StartOrPause(); break;
             case Hide: HideWindow(); break;
-            case Quit: Remember(); DestroyWindow(window); break;
+            case Quit:
+                if (operations.IsStopped) settings.AutoConnect = false;
+                StopSharing();
+                try { Remember(); SaveSettings(); }
+                catch (Exception ex) { MessageBox(window, "Sharing stopped. Settings could not be saved: " + ex.Message, "Glide", 0x30); }
+                finally { DestroyWindow(window); }
+                break;
         }
         }
+        catch (OperationCanceledException) when (operations.IsStopped) { }
         catch (Exception ex) { message = ex is OperationCanceledException ? "Pairing canceled or timed out. Try again when both PCs are ready." : ex.Message; }
         finally { Refresh(); }
     }
     private void HideWindow()
     {
         if (!trayAdded) { message = "Tray unavailable. Use Minimize to keep Glide running."; InvalidateRect(window, 0, false); return; }
-        Remember(); ShowWindow(window, 0); UpdatePairingPolicy();
+        Remember(); SaveSettings(); ShowWindow(window, 0); UpdatePairingPolicy();
     }
     private void Refresh()
     {
@@ -293,6 +303,14 @@ internal sealed partial class MainWindow : IDisposable
             switch (m)
             {
                 case WM_COMMAND: if (((p >> 16) & 65535) == 0) Click((int)(p & 65535)); return 0;
+                case WM_HOTKEY:
+                    if (p == 1 && !Diagnostic)
+                    {
+                        StopSharing("Emergency stop · sharing is off");
+                        RememberPause("Emergency stop · sharing remains paused until you press Start.");
+                        Refresh();
+                    }
+                    return 0;
                 case WM_APP + 2: while (uiActions.TryDequeue(out var action)) action(); return 0;
                 case WM_PAINT: PaintWindow(w); return 0;
                 case 0x318: DrawContent(w, (nint)p); return 0; // WM_PRINTCLIENT
@@ -321,7 +339,8 @@ internal sealed partial class MainWindow : IDisposable
                     if ((uint)l is 0x203 or 0x205) { ShowWindow(w, 9); SetForegroundWindow(w); } return 0;
                 case WM_CLOSE: HideWindow(); return 0;
                 case WM_DESTROY:
-                    closed = true; KillTimer(w, 1); windowLifetime.Cancel(); engine.Stop();
+                    closed = true; KillTimer(w, 1); windowLifetime.Cancel(); StopSharing();
+                    if (emergencyHotkey) { UnregisterHotKey(w, 1); emergencyHotkey = false; }
                     if (trayAdded) { Shell_NotifyIcon(2, ref tray); trayAdded = false; }
                     PostQuitMessage(0); return 0;
             }
@@ -436,10 +455,13 @@ internal sealed partial class MainWindow : IDisposable
     }
     public void Dispose()
     {
+        StopSharing();
         windowLifetime.Cancel(); pairingServer?.Dispose(); discovery?.Dispose();
         engine.Dispose(); identity?.Dispose();
         if (window != 0 && !closed) DestroyWindow(window);
         foreach (var font in fonts.Values) DeleteObject(font);
         DeleteObject(fieldBrush);
+        operations.Dispose(); windowLifetime.Dispose();
     }
+    private void SaveSettings() { if (!Diagnostic) settings.Save(); }
 }

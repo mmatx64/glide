@@ -15,9 +15,9 @@ internal static class TransportBenchmark
         try
         {
             var accept = Task.Run(async () => await Connection.AcceptAsync(await listener.AcceptTcpClientAsync(ct), identity, 1920, 1080, ct));
-            using var client = await Connection.ConnectAsync("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port,
+            await using var client = await Connection.ConnectAsync("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port,
                 Invitation.Parse(identity.Invitation), 1920, 1080, ct);
-            using var server = await accept;
+            await using var server = await accept;
             using var arrived = new SemaphoreSlim(0);
             var samples = new List<double>();
             int sequence = 0;
@@ -64,9 +64,9 @@ internal static class TransportBenchmark
             }
             finally
             {
-                client.Dispose(); server.Dispose();
+                client.Stop(); server.Stop();
                 try { await Task.WhenAll(clientRun, serverRun); } catch (Exception) { }
-                client.Finish(); server.Finish();
+                await client.DisposeAsync(); await server.DisposeAsync();
             }
             Console.WriteLine("Loopback synthetic transport only; excludes two-PC Wi-Fi, input hooks, injection, and display latency.");
         }

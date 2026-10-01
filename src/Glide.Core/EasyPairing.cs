@@ -40,11 +40,12 @@ public static class EasyPairing
         byte[] encodedName = Encoding.ASCII.GetBytes(Announcement.CleanName(name));
         hello[8] = (byte)encodedName.Length; encodedName.CopyTo(hello, 9);
         Commitment(clientNonce, fingerprint).CopyTo(hello, 72);
-        await stream.WriteAsync(hello, ct).ConfigureAwait(false);
-        byte[] serverNonce = new byte[32]; await stream.ReadExactlyAsync(serverNonce, ct).ConfigureAwait(false);
-        await stream.WriteAsync(clientNonce, ct).ConfigureAwait(false);
+        await stream.WriteAsync(hello, connectTimeout.Token).ConfigureAwait(false);
+        byte[] serverNonce = new byte[32]; await stream.ReadExactlyAsync(serverNonce, connectTimeout.Token).ConfigureAwait(false);
+        await stream.WriteAsync(clientNonce, connectTimeout.Token).ConfigureAwait(false);
         string code = ComparisonCode(fingerprint, clientNonce, serverNonce);
         await ConfirmBoth(stream, token => approve(new("Receiving PC", host, code, false), token), ct).ConfigureAwait(false);
+        timeout.CancelAfter(TimeSpan.FromSeconds(6));
         var credentials = new byte[64]; await stream.ReadExactlyAsync(credentials, ct).ConfigureAwait(false);
         if (!CryptographicOperations.FixedTimeEquals(credentials.AsSpan(0, 32), fingerprint)) throw new AuthenticationException("Pairing identity changed.");
         var result = new Invitation(credentials[..32], credentials[32..]);
@@ -91,6 +92,7 @@ public static class EasyPairing
             string code = ComparisonCode(fingerprint, clientNonce, serverNonce);
             string address = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
             await ConfirmBoth(stream, token => approve(new(name, address, code, true), token), ct).ConfigureAwait(false);
+            timeout.CancelAfter(TimeSpan.FromSeconds(6));
             // Pause/hide may revoke permission while the initiator is checking the code.
             if (authorizeRequester is not null && !authorizeRequester(requesterFingerprint))
                 throw new AuthenticationException("Pairing is no longer available on this PC.");
@@ -132,37 +134,58 @@ public static class EasyPairing
 
 public sealed class PairingServer : IDisposable
 {
-    private readonly CancellationTokenSource cancellation = new();
-    private readonly TcpListener listener;
-    private readonly Task task;
-    public event Action<PairedPeer>? Paired;
+    private readonly object gate = new();
+    private CancellationTokenSource epoch = new();
+    private readonly TcpServer server;
+    private int pairing;
+    private bool disposed;
+    public event Func<PairedPeer, CancellationToken, Task>? Paired;
     public event Action<string>? Failed;
-    public string? Error { get; private set; }
-    private volatile bool isPairing;
-    public bool IsPairing => isPairing;
+    public bool IsPairing => Volatile.Read(ref pairing) != 0;
+    public IPEndPoint LocalEndpoint => server.LocalEndpoint;
     public PairingServer(PairingIdentity identity, Func<PairingPrompt, CancellationToken, Task<bool>> approve, Func<bool> available,
         Func<byte[], bool> authorizeRequester, int port = EasyPairing.Port)
     {
-        listener = new TcpListener(IPAddress.Any, port); listener.Start(4);
-        task = Task.Run(async () =>
+        server = new(new(IPAddress.Any, port), async (client, ct) =>
         {
-            var ct = cancellation.Token;
-            while (!ct.IsCancellationRequested)
+            CancellationToken requestEpoch;
+            lock (gate) requestEpoch = epoch.Token;
+            using var request = CancellationTokenSource.CreateLinkedTokenSource(ct, requestEpoch);
+            bool ownsPrompt = false;
+            try
             {
-                try
+                if (!available()) return;
+                var peer = await EasyPairing.AcceptAsync(client, identity, async (prompt, token) =>
                 {
-                    var client = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
-                    if (!available()) { client.Dispose(); continue; }
-                    isPairing = true;
-                    try { Paired?.Invoke(await EasyPairing.AcceptAsync(client, identity, approve, ct, authorizeRequester).ConfigureAwait(false)); }
-                    catch (Exception ex) when (!ct.IsCancellationRequested) { Error = ex.Message; Failed?.Invoke(ex.Message); }
-                    finally { isPairing = false; }
-                    await Task.Delay(1000, ct).ConfigureAwait(false);
-                }
-                catch (Exception) when (ct.IsCancellationRequested) { break; }
-                catch (SocketException ex) { Error = ex.Message; await Task.Delay(1000, ct).ConfigureAwait(false); }
+                    if (!available() || Interlocked.CompareExchange(ref pairing, 1, 0) != 0) return false;
+                    ownsPrompt = true;
+                    return await approve(prompt, token).ConfigureAwait(false);
+                }, request.Token, authorizeRequester).ConfigureAwait(false);
+                request.Token.ThrowIfCancellationRequested();
+                if (Paired is { } paired) await paired(peer, requestEpoch).WaitAsync(request.Token).ConfigureAwait(false);
             }
+            catch (Exception) when (request.IsCancellationRequested) { }
+            catch (Exception ex) { if (ownsPrompt) Failed?.Invoke(ex.Message); }
+            finally { if (ownsPrompt) Volatile.Write(ref pairing, 0); }
         });
     }
-    public void Dispose() { cancellation.Cancel(); listener.Stop(); try { task.Wait(TimeSpan.FromSeconds(2)); } catch (AggregateException) { } }
+    // Completed results carry this epoch too, so a queued UI notification can
+    // still be rejected if Pause occurs after the network exchange completes.
+    public void CancelPairing()
+    {
+        lock (gate)
+        {
+            if (disposed) return;
+            epoch.Cancel(); epoch.Dispose(); epoch = new();
+        }
+    }
+    public void Dispose()
+    {
+        lock (gate)
+        {
+            if (disposed) return;
+            disposed = true; epoch.Cancel();
+        }
+        server.Dispose(); epoch.Dispose();
+    }
 }

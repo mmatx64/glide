@@ -32,6 +32,8 @@ internal static class NativeTests
             if (File.ReadAllText(path).Contains(identity.Invitation, StringComparison.Ordinal)) throw new Exception("Credential saved in cleartext.");
             File.Delete(path);
             lines.Add("PASS INI round-trip and DPAPI credential protection");
+            LifecycleTests.Run(directory).GetAwaiter().GetResult();
+            lines.Add("PASS stopped pairing cannot restart, automatic resume is blocked, settings failure cannot prevent Pause, and 250 concurrent start/stop races");
             TransportTest().GetAwaiter().GetResult();
             lines.Add("PASS native AOT TLS authentication, input echo, and disconnect");
             PairingTest().GetAwaiter().GetResult();
@@ -44,8 +46,16 @@ internal static class NativeTests
                     Thread.Sleep(80); engine.StopAsync().GetAwaiter().GetResult();
                     if (engine.Running) throw new Exception("Role transition did not finish shutting down.");
                 }
+                for (int i = 0; i < 20; i++)
+                {
+                    engine.Start(false, "", null, identity, true, 0);
+                    engine.StopAsync().GetAwaiter().GetResult();
+                    if (engine.Running || engine.Connected) throw new Exception("Stop raced receiver startup.");
+                }
             }
             lines.Add("PASS awaited role transitions can stop and restart the input listener");
+            ReceiverLifecycle(identity).GetAwaiter().GetResult();
+            lines.Add("PASS native receiver accepts beside a stalled TLS client, rejects a second active session, and drains shutdown");
             using (var worker = new InputWorker()) { Thread.Sleep(150); worker.Emergency(); Thread.Sleep(100); }
             lines.Add("PASS dedicated hook thread, emergency path, and clean teardown (no remote input injected)");
             lines.Add($"Desktop {Native.Desktop.Width} x {Native.Desktop.Height}");
@@ -74,7 +84,8 @@ internal static class NativeTests
             throw new Exception("Session token metadata mismatch.");
         string stopName = "Global\\Glide.Service.Stop." + Guid.NewGuid().ToString("N");
         if (!ServiceSession.ValidEvent(stopName, "Stop") || ServiceSession.ValidEvent(stopName, "Show")
-            || ServiceSession.ValidEvent(stopName + " --unexpected", "Stop"))
+            || ServiceSession.ValidEvent(stopName + " --unexpected", "Stop")
+            || ServiceSession.ValidEvent("Global\\Glide.Service.Stop.extra." + Guid.NewGuid().ToString("N"), "Stop"))
             throw new Exception("Service event name validation failed.");
         string eventName = "Local\\Glide.Service.Test." + Guid.NewGuid().ToString("N");
         using (var signal = new ServiceEvent(eventName, identity.User!.Value, true))
@@ -214,8 +225,8 @@ internal static class NativeTests
         try
         {
             var accept = Task.Run(async () => await Connection.AcceptAsync(await listener.AcceptTcpClientAsync(timeout.Token), identity, 1920, 1080, timeout.Token));
-            using var client = await Connection.ConnectAsync("127.0.0.1", ((System.Net.IPEndPoint)listener.LocalEndpoint).Port, Invitation.Parse(identity.Invitation), 2560, 1440, timeout.Token);
-            using var server = await accept;
+            await using var client = await Connection.ConnectAsync("127.0.0.1", ((System.Net.IPEndPoint)listener.LocalEndpoint).Port, Invitation.Parse(identity.Invitation), 2560, 1440, timeout.Token);
+            await using var server = await accept;
             var echo = new TaskCompletionSource<Packet>(TaskCreationOptions.RunContinuationsAsynchronously);
             server.Input += packet => server.Send(packet);
             client.Input += packet => echo.TrySetResult(packet);
@@ -223,11 +234,38 @@ internal static class NativeTests
             var sent = new Packet(MessageKind.Move, 32000, 16000);
             client.Send(sent);
             if (await echo.Task.WaitAsync(timeout.Token) != sent) throw new Exception("Native encrypted echo failed.");
-            client.Dispose(); server.Dispose();
+            client.Stop(); server.Stop();
             try { await clientRun; } catch (Exception) { }
             try { await serverRun; } catch (Exception) { }
-            client.Finish(); server.Finish();
+            await client.DisposeAsync(); await server.DisposeAsync();
         }
         finally { listener.Stop(); }
+    }
+    private static async Task ReceiverLifecycle(PairingIdentity identity)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = timeout.Token;
+        var reservation = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0); reservation.Start();
+        int port = ((System.Net.IPEndPoint)reservation.LocalEndpoint).Port; reservation.Stop();
+        using var engine = new Engine();
+        engine.Start(false, "", null, identity, true, port);
+        System.Net.Sockets.TcpClient stalled;
+        while (true)
+        {
+            var candidate = new System.Net.Sockets.TcpClient();
+            try { await candidate.ConnectAsync(System.Net.IPAddress.Loopback, port, ct); stalled = candidate; break; }
+            catch (System.Net.Sockets.SocketException) { candidate.Dispose(); await Task.Delay(20, ct); }
+            catch { candidate.Dispose(); throw; }
+        }
+        using var stalledLifetime = stalled;
+        using var handshake = CancellationTokenSource.CreateLinkedTokenSource(ct); handshake.CancelAfter(TimeSpan.FromSeconds(2));
+        await using var client = await Connection.ConnectAsync("127.0.0.1", port, Invitation.Parse(identity.Invitation), 1920, 1080, handshake.Token);
+        while (!engine.Connected) await Task.Delay(10, ct);
+        bool rejected = false;
+        try { await using var duplicate = await Connection.ConnectAsync("127.0.0.1", port, Invitation.Parse(identity.Invitation), 1920, 1080, ct); }
+        catch (Exception ex) when (ex is IOException or System.Security.Authentication.AuthenticationException) { rejected = true; }
+        if (!rejected) throw new Exception("Receiver accepted a second active input session.");
+        await engine.StopAsync().WaitAsync(ct);
+        if (engine.Running || engine.Connected) throw new Exception("Receiver shutdown left an active session.");
     }
 }

@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.5.0** adds an optional service that starts Glide elevated at sign-in for credential dialogs and administrator applications on the normal desktop. This is preview software; service mode still needs two-PC testing.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.5.1** fixes sharing-stop races, bounds incoming connections, and improves shutdown and service-validation cleanup. The optional service starts Glide elevated at sign-in for credential dialogs and administrator applications on the normal desktop. This is preview software; service mode still needs two-PC testing.
 
-**[Download Glide v0.5.0 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.5.0/Glide-0.5.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.5.0)
+**[Download Glide v0.5.1 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.5.1/Glide-0.5.1-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.5.1)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -19,11 +19,11 @@ The ZIP supports ordinary portable use and the optional service installation bel
 
 Turn off Mouse Without Borders while trying Glide so both apps do not intercept the same input. Start with an ordinary application on the receiver. To reverse roles after pairing, select **This PC receives** on the old controller and **This PC controls** on the other PC. Pairing exchanges credentials both ways, so no new code is needed. Portable mode does not add Windows startup entries; automatic reconnection happens when you open it.
 
-## Optional service mode (v0.5.0)
+## Optional service mode
 
 Service mode automatically starts Glide elevated at sign-in, so normal-desktop Windows credential dialogs and administrator applications can receive shared input without relaunching Glide as administrator. Install it on the receiving PC, or on both PCs if you reverse roles. It supports **one enrolled Windows administrator account and the active physical console session** per PC. It does not control lock screens, UAC secure desktops, Ctrl+Alt+Delete, other users' sessions, or RDP sessions.
 
-1. Quit the portable Glide instance. Extract the v0.5.0 package into a writable folder.
+1. Quit the portable Glide instance. Extract the v0.5.1 package into a writable folder.
 2. From PowerShell in that folder, run `.\Install-Service.ps1`. Approve the one-time Windows administrator prompt **as the same Windows account that will use Glide**. To retain a portable pairing, instead run `.\Install-Service.ps1 -SettingsPath 'C:\path\to\existing\Glide.ini'`. A first installation otherwise imports the blank INI beside the installer. Updates preserve the installed settings.
 3. Open **Glide (service)** from the Start menu, or use its tray icon. No administrator prompt is needed for normal reopening. The title says **SERVICE**. A paired app starts hidden at sign-in; a fresh installation opens for setup. For a fresh pairing, initiate **Pair & connect from the service PC** and confirm the code there, then reverse roles if needed. An unpaired service session does not accept unattended incoming first-pair requests. If installing service mode on both unpaired PCs, pair them in portable mode first, then import each PC's own INI during installation.
 
@@ -103,6 +103,8 @@ Build prerequisites: .NET 10 SDK, Visual Studio C++ Build Tools, and a Windows S
 ```
 
 This runs the protocol/security tests, publishes NativeAOT, runs the native smoke test, and creates `dist/Glide` plus a ZIP with fresh settings. It never packages a user's saved credentials. Debug symbols stay in `artifacts/native`.
+
+The build also runs offline service-cleanup tests with mocked Windows service commands. They check that failed validation restores normal service configuration without touching the installed service. Core and native checks exercise input overflow, cancellation, and receiver shutdown without injecting remote input.
 
 Use `.\build.ps1 -SkipLocalCopy` to build, test, and package a release while `dist/Glide/Glide.exe` is running; the running app and its settings are left in place.
 

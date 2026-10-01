@@ -10,7 +10,7 @@ internal sealed class InputWorker : IDisposable
     private readonly Thread thread;
     private readonly ManualResetEventSlim ready = new();
     private readonly ConcurrentQueue<Action> commands = new();
-    private readonly ConcurrentQueue<(Connection Peer, Packet Packet)> inbound = new();
+    private readonly Inbox inbound = new();
     private readonly HookProc mouseProc, keyProc;
     private readonly bool[] physical = new bool[256], suppressed = new bool[768];
     private readonly Dictionary<int, Packet> heldKeys = new();
@@ -26,6 +26,7 @@ internal sealed class InputWorker : IDisposable
     private double remoteX, remoteY;
     private long cooldown;
     private Exception? startupError;
+    private int disposing;
     internal bool IsRemote => remote;
     internal event Action<string>? Notice;
     private const nuint Tag = 0x474c4944;
@@ -36,7 +37,11 @@ internal sealed class InputWorker : IDisposable
         mouseProc = Mouse; keyProc = Keyboard;
         thread = new Thread(Loop) { IsBackground = true, Name = "Glide input" };
         thread.Start(); ready.Wait();
-        if (startupError is not null) throw new InvalidOperationException("Input setup failed.", startupError);
+        if (startupError is not null)
+        {
+            thread.Join(); ready.Dispose();
+            throw new InvalidOperationException("Input setup failed.", startupError);
+        }
     }
     internal void Attach(Connection peer, bool isController, bool remoteRight) => Post(() =>
     {
@@ -47,10 +52,14 @@ internal sealed class InputWorker : IDisposable
     internal void Emergency() => Post(Panic);
     internal void Receive(Connection peer, Packet packet)
     {
-        if (inbound.Count >= 256) { connection?.Dispose(); return; }
-        inbound.Enqueue((peer, packet)); PostThreadMessage(threadId, Incoming, 0, 0);
+        if (!inbound.TryAdd(peer, packet)) return;
+        if (!PostThreadMessage(threadId, Incoming, 0, 0)) peer.Stop();
     }
-    private void Post(Action action) { commands.Enqueue(action); PostThreadMessage(threadId, Work, 0, 0); }
+    private void Post(Action action)
+    {
+        if (Volatile.Read(ref disposing) != 0) return;
+        commands.Enqueue(action); PostThreadMessage(threadId, Work, 0, 0);
+    }
     private void Loop()
     {
         try
@@ -65,24 +74,26 @@ internal sealed class InputWorker : IDisposable
             if (timer == 0) throw new InvalidOperationException("Windows refused the input watchdog timer.");
             RegisterHotKey(0, 1, 0x4003, 0x7b);
             ready.Set();
-            while (GetMessage(out var message, 0, 0, 0))
+            int result;
+            while ((result = GetMessage(out var message, 0, 0, 0)) > 0)
             {
                 try
                 {
                     if (message.Id == Work) { while (commands.TryDequeue(out var command)) command(); }
-                    else if (message.Id == Incoming) { if (inbound.TryDequeue(out var item) && ReferenceEquals(item.Peer, connection)) Apply(item.Packet); }
+                    else if (message.Id == Incoming) { if (inbound.TryTake(out var item) && ReferenceEquals(item.Peer, connection)) Apply(item.Packet); }
                     else if (message.Id == WM_HOTKEY) Panic();
                     else if (message.Id == WM_TIMER)
                     {
                         if (connection is { IsAlive: false }) { Reset(); connection = null; }
                         var current = Desktop;
                         if (current.Left != desktop.Left || current.Top != desktop.Top || current.Width != desktop.Width || current.Height != desktop.Height)
-                        { connection?.Dispose(); Reset(); desktop = current; Notice?.Invoke("Display layout changed. Reconnecting."); }
+                        { connection?.Stop(); Reset(); desktop = current; Notice?.Invoke("Display layout changed. Reconnecting."); }
                     }
                     else { TranslateMessage(ref message); DispatchMessage(ref message); }
                 }
-                catch (Exception ex) { connection?.Dispose(); Reset(); Notice?.Invoke(ex.Message); }
+                catch (Exception ex) { connection?.Stop(); Reset(); Notice?.Invoke(ex.Message); }
             }
+            if (result < 0) throw new InvalidOperationException("Windows input message loop failed.");
         }
         catch (Exception ex) { startupError = ex; ready.Set(); }
         finally
@@ -146,7 +157,7 @@ internal sealed class InputWorker : IDisposable
                 if (flags != 0) { connection.Send(new Packet(MessageKind.Button, flags, mouseData)); return 1; }
             }
         }
-        catch { connection?.Dispose(); remote = false; }
+        catch { connection?.Stop(); remote = false; }
         return CallNextHookEx(0, code, wParam, lParam);
     }
     private nint Keyboard(int code, nuint wParam, nint lParam)
@@ -173,7 +184,7 @@ internal sealed class InputWorker : IDisposable
             }
             if (suppressed[keyId]) { if (up) suppressed[keyId] = false; return 1; }
         }
-        catch { connection?.Dispose(); remote = false; }
+        catch { connection?.Stop(); remote = false; }
         return CallNextHookEx(0, code, wParam, lParam);
     }
     private bool AnyHeld()
@@ -193,7 +204,7 @@ internal sealed class InputWorker : IDisposable
     {
         if (remote) ReturnLocal();
         connection?.Send(new Packet(MessageKind.Release));
-        connection?.Dispose(); Reset();
+        connection?.Stop(); Reset();
         Notice?.Invoke("Emergency stop. Press Start to resume sharing.");
         EmergencyStopped?.Invoke();
     }
@@ -274,7 +285,8 @@ internal sealed class InputWorker : IDisposable
     }
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref disposing, 1) != 0) return;
         PostThreadMessage(threadId, 0x12, 0, 0);
-        thread.Join(TimeSpan.FromSeconds(2)); ready.Dispose();
+        thread.Join(); ready.Dispose();
     }
 }

@@ -10,6 +10,9 @@ $data = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Glide
 $installed = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Glide\Glide.exe'
 $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $checks = [Collections.Generic.List[string]]::new()
+$configurationChanged = $false
+$validationSucceeded = $false
+$exitCode = 1
 function Pass([string]$Text) { $checks.Add('PASS ' + $Text); [IO.File]::WriteAllLines($result, $checks) }
 function Require([bool]$Value, [string]$Text) { if (-not $Value) { throw $Text } }
 function Read-Probe {
@@ -22,6 +25,7 @@ function Read-Probe {
 try {
     [IO.File]::WriteAllText($result, "Starting real SCM/session validation; no network or input injection in probe mode.`r`n")
     # Preserve the current user's actual pairing without printing any INI content.
+    $configurationChanged = $true
     & (Join-Path $source 'Install-Service.ps1') -SettingsPath $SettingsPath -DiagnosticMode -NoStart -SkipFirewall
     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw 'Installer failed' }
     Pass 'protected installation and administrator-only service data created'
@@ -66,14 +70,34 @@ try {
     Require ($service.PathName -eq ('"' + $installed + '" --service')) 'Production service command mismatch'
     Require ($service.StartMode -eq 'Auto') 'Service is not automatic'
     Pass 'normal service mode installed with automatic startup and private-LAN firewall rules'
-    if ($EnableAfterTest) {
-        Start-Service $serviceName
-        Pass 'normal service started; an existing portable Glide may need to be quit once'
-    } else { Pass 'normal service configured and left stopped after validation' }
-    exit 0
+    $validationSucceeded = $true
+    $exitCode = 0
 } catch {
     $checks.Add('FAIL ' + $_.Exception.Message)
     [IO.File]::WriteAllLines($result, $checks)
-    Stop-Service -Name $serviceName -ErrorAction SilentlyContinue
-    exit 1
+} finally {
+    if ($configurationChanged) {
+        try {
+            $service = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+            if ($service) {
+                $normalPath = '"' + $installed + '" --service'
+                $testPath = '"' + $installed + '" --service-test'
+                if ($service.PathName -notin @($normalPath,$testPath)) { throw 'Refusing to restore an unexpected service executable.' }
+                Stop-Service -Name $serviceName -ErrorAction Stop
+                (Get-Service $serviceName).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(15))
+                $restored = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{ PathName = $normalPath; StartMode = 'Automatic' }
+                Require ($restored.ReturnValue -eq 0) 'Failed to restore normal service configuration'
+                Pass 'normal service configuration restored after validation, including failure paths'
+                if ($validationSucceeded -and $EnableAfterTest) {
+                    Start-Service $serviceName
+                    Pass 'normal service started; an existing portable Glide may need to be quit once'
+                } else { Pass 'normal service left stopped after validation' }
+            }
+        } catch {
+            $checks.Add('FAIL cleanup: ' + $_.Exception.Message)
+            [IO.File]::WriteAllLines($result, $checks)
+            $exitCode = 1
+        }
+    }
 }
+exit $exitCode

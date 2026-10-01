@@ -9,6 +9,7 @@ public sealed class PairingIdentity : IDisposable
     public byte[] Secret { get; }
     public PairingIdentity(byte[]? pfx = null, byte[]? secret = null)
     {
+        if (secret is not null && secret.Length != 32) throw new ArgumentException("Invalid pairing secret.", nameof(secret));
         if (pfx is null)
         {
             using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -18,7 +19,6 @@ public sealed class PairingIdentity : IDisposable
         }
         else Certificate = X509CertificateLoader.LoadPkcs12(pfx, null, KeyStorage);
         Secret = secret ?? RandomNumberGenerator.GetBytes(32);
-        if (Secret.Length != 32) throw new ArgumentException("Invalid pairing secret.");
     }
     public byte[] Fingerprint => Certificate.GetCertHash(HashAlgorithmName.SHA256);
     public string Invitation => new Invitation(Fingerprint, Secret).Encode();

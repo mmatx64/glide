@@ -6,16 +6,18 @@ namespace Glide;
 
 internal sealed class Engine : IDisposable
 {
+    private readonly object gate = new();
     private CancellationTokenSource? cancellation;
     private Task? task;
     private InputWorker? input;
-    private TcpListener? listener;
+    private TcpServer? listener;
     private volatile Connection? connection;
     private volatile string status = "Ready when you are";
     private volatile string peerHost = "";
+    private bool disposed;
     internal event Action? EmergencyStopped;
     internal string Status => status;
-    internal bool Running => task is { IsCompleted: false } && cancellation is { IsCancellationRequested: false };
+    internal bool Running { get { lock (gate) return task is { IsCompleted: false } && cancellation is { IsCancellationRequested: false }; } }
     internal bool Connected => connection is { IsAlive: true };
     internal bool ControllingRemote => input?.IsRemote ?? false;
     internal double Latency => connection?.RoundTripMs ?? 0;
@@ -23,56 +25,72 @@ internal sealed class Engine : IDisposable
     internal long Coalesced => connection?.Coalesced ?? 0;
     internal void Start(bool controller, string host, Invitation? invitation, PairingIdentity? identity, bool right, int port = Connection.Port)
     {
-        if (task is { IsCompleted: false }) throw new InvalidOperationException("The previous connection is still closing. Try again in a moment.");
-        input ??= CreateInput();
-        peerHost = host;
-        cancellation?.Dispose(); cancellation = new CancellationTokenSource();
-        var token = cancellation.Token;
-        status = controller ? "Connecting securely…" : "Listening on TCP 24819";
-        task = Task.Run(async () =>
+        lock (gate)
         {
-            try
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (task is { IsCompleted: false }) throw new InvalidOperationException("The previous connection is still closing. Try again in a moment.");
+            input ??= CreateInput();
+            peerHost = host;
+            cancellation?.Dispose(); cancellation = new();
+            var token = cancellation.Token;
+            status = controller ? "Connecting securely…" : "Listening on TCP " + port;
+            task = Task.Run(async () =>
             {
-                if (!controller)
+                try
                 {
-                    listener = new TcpListener(IPAddress.Any, port);
-                    listener.Start(4);
-                }
-                while (!token.IsCancellationRequested)
-                {
-                    Connection? peer = null;
-                    try
+                    if (controller)
                     {
-                        var desktop = Native.Desktop;
-                        if (controller)
-                            peer = await Connection.ConnectAsync(peerHost, port, invitation!, desktop.Width, desktop.Height, token);
-                        else
+                        while (!token.IsCancellationRequested)
                         {
-                            var socket = await listener!.AcceptTcpClientAsync(token);
-                            peer = await Connection.AcceptAsync(socket, identity!, desktop.Width, desktop.Height, token);
+                            try
+                            {
+                                var desktop = Native.Desktop;
+                                await Handle(await Connection.ConnectAsync(peerHost, port, invitation!, desktop.Width, desktop.Height, token), token);
+                            }
+                            catch (Exception) when (token.IsCancellationRequested) { break; }
+                            catch (Exception ex) { status = "Reconnecting · " + Friendly(ex); }
+                            await Task.Delay(1800, token);
                         }
+                    }
+                    else
+                    {
+                        using var server = new TcpServer(new(IPAddress.Any, port), async (socket, ct) =>
+                        {
+                            if (Connected) return;
+                            var desktop = Native.Desktop;
+                            await Handle(await Connection.AcceptAsync(socket, identity!, desktop.Width, desktop.Height, ct), ct);
+                        }, ex => { if (!token.IsCancellationRequested && !Connected) status = "Listening · " + Friendly(ex); });
+                        lock (gate) listener = server;
+                        using var registration = token.Register(server.Stop);
+                        await server.Completion;
+                    }
+                }
+                catch (Exception) when (token.IsCancellationRequested) { }
+                catch (Exception ex) { status = Friendly(ex); }
+                finally { lock (gate) { listener = null; input.Detach(); } }
+            });
+
+            async Task Handle(Connection peer, CancellationToken ct)
+            {
+                await using (peer)
+                {
+                    lock (gate)
+                    {
+                        if (token.IsCancellationRequested || ct.IsCancellationRequested || connection is not null) return;
                         connection = peer;
                         input.Attach(peer, controller, right);
                         peer.Input += packet => input.Receive(peer, packet);
                         status = controller ? "Connected · move across the screen edge" : "Connected · ready to receive input";
-                        await peer.RunAsync(token);
                     }
-                    catch (Exception) when (token.IsCancellationRequested) { break; }
-                    catch (Exception ex) when (!token.IsCancellationRequested)
-                    {
-                        status = controller ? "Reconnecting · " + Friendly(ex) : "Listening · " + Friendly(ex);
-                    }
+                    try { await peer.RunAsync(ct); }
                     finally
                     {
-                        peer?.Dispose(); input.Detach(); connection = null; peer?.Finish();
+                        peer.Stop();
+                        lock (gate) { input.Detach(); connection = null; }
                     }
-                    await Task.Delay(controller ? 1800 : 300, token);
                 }
             }
-            catch (Exception) when (token.IsCancellationRequested) { }
-            catch (Exception ex) { status = Friendly(ex); }
-            finally { listener?.Stop(); listener = null; input.Detach(); }
-        });
+        }
     }
     private InputWorker CreateInput()
     {
@@ -83,18 +101,22 @@ internal sealed class Engine : IDisposable
     }
     internal void Stop(string reason = "Sharing paused · local control")
     {
-        status = reason;
-        cancellation?.Cancel(); listener?.Stop(); connection?.Dispose(); input?.Detach();
+        lock (gate)
+        {
+            status = reason;
+            cancellation?.Cancel(); listener?.Stop(); connection?.Stop(); input?.Detach();
+        }
     }
     internal void UpdateAddress(string address) => peerHost = address;
     internal async Task StopAsync(string reason = "Sharing paused · local control")
     {
-        Stop(reason);
-        if (task is not null) await task.ConfigureAwait(false);
+        Task? pending;
+        lock (gate) { Stop(reason); pending = task; }
+        if (pending is not null) await pending.ConfigureAwait(false);
     }
     private static string Friendly(Exception ex) => ex switch
     {
-        SocketException se when se.SocketErrorCode == SocketError.AddressAlreadyInUse => "Port 24819 is already in use.",
+        SocketException se when se.SocketErrorCode == SocketError.AddressAlreadyInUse => "Input port is already in use.",
         SocketException => "Peer unavailable. Check its address, listener, and private-network firewall rule.",
         System.Security.Authentication.AuthenticationException => "Pairing changed. Pause, then pair with the other PC again.",
         OperationCanceledException => "Connection timed out. Check the other PC and firewall.",
@@ -103,8 +125,8 @@ internal sealed class Engine : IDisposable
     };
     public void Dispose()
     {
-        Stop();
-        try { task?.Wait(TimeSpan.FromSeconds(3)); } catch (AggregateException) { }
-        input?.Dispose(); cancellation?.Dispose();
+        lock (gate) { if (disposed) return; disposed = true; }
+        StopAsync().GetAwaiter().GetResult();
+        input?.Dispose(); cancellation?.Dispose(); cancellation = null;
     }
 }

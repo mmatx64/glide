@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using Glide.Core;
+using static TestSupport;
 
 if (args.Contains("--benchmark")) { await TransportBenchmark.Run(); return; }
 
@@ -33,8 +34,8 @@ using (var queue = new Outbox(4))
     queue.TryAdd(new Packet(MessageKind.Button, 2)); queue.TryAdd(new Packet(MessageKind.Move, 9000));
     queue.TryAdd(new Packet(MessageKind.Button, 4));
     Check(!queue.TryAdd(new Packet(MessageKind.Key, 65)), "reliable-event overflow fails closed");
-    Check((await queue.TakeAsync(ct)).A == 7999, "8000 queued motion events collapse to latest position");
-    Check((await queue.TakeAsync(ct)).Kind == MessageKind.Button && (await queue.TakeAsync(ct)).A == 9000 && (await queue.TakeAsync(ct)).A == 4,
+    Check((await TestSupport.TakeOne(queue, ct)).A == 7999, "8000 queued motion events collapse to latest position");
+    Check((await TestSupport.TakeOne(queue, ct)).Kind == MessageKind.Button && (await TestSupport.TakeOne(queue, ct)).A == 9000 && (await TestSupport.TakeOne(queue, ct)).A == 4,
         "motion coalescing preserves click ordering");
     Check(queue.Coalesced == 7999, "coalescing telemetry");
 }
@@ -57,11 +58,10 @@ async Task<Connection> Accept()
     try { return await Connection.AcceptAsync(await listener.AcceptTcpClientAsync(ct), identity, 2560, 1440, ct); }
     catch (Exception ex) { Console.WriteLine("SERVER: " + ex.Message + " " + ex.InnerException?.Message); throw; }
 }
-async Task Ignore(Task task) { try { await task; } catch (Exception) { } }
 
 var accept = Accept();
-using var client = await Connection.ConnectAsync("127.0.0.1", port, invitation, 1920, 1080, ct);
-using var server = await accept;
+await using var client = await Connection.ConnectAsync("127.0.0.1", port, invitation, 1920, 1080, ct);
+await using var server = await accept;
 Check(client.RemoteWidth == 2560 && server.RemoteWidth == 1920, "TLS-authenticated desktop negotiation");
 var samples = new ConcurrentQueue<double>();
 var echoes = new ConcurrentQueue<Packet>();
@@ -94,28 +94,28 @@ for (int burst = 0; burst < 5; burst++)
     CheckSilent(echoes.ToArray().SequenceEqual(expected)); echoes.Clear();
 }
 Check(true, "batched TLS preserves 480 mixed movement/key/button events in exact order");
-server.Dispose(); await Ignore(serverRun); await Ignore(clientRun);
+server.Stop(); await Ignore(serverRun); await Ignore(clientRun);
 Check(!client.IsAlive, "disconnect stops session");
-server.Finish(); client.Finish();
+await server.DisposeAsync(); await client.DisposeAsync();
 
 var wrongSecret = new Invitation(invitation.Fingerprint, new byte[32]);
 accept = Accept();
-await Reject(async () => { using var peer = await Connection.ConnectAsync("127.0.0.1", port, wrongSecret, 1920, 1080, ct); }, "wrong pairing secret rejected");
+await Reject(async () => { await using var peer = await Connection.ConnectAsync("127.0.0.1", port, wrongSecret, 1920, 1080, ct); }, "wrong pairing secret rejected");
 await Ignore(accept);
 var wrongPin = new Invitation(new byte[32], invitation.Secret);
 accept = Accept();
-await Reject(async () => { using var peer = await Connection.ConnectAsync("127.0.0.1", port, wrongPin, 1920, 1080, ct); }, "wrong server certificate rejected before pairing secret is sent");
+await Reject(async () => { await using var peer = await Connection.ConnectAsync("127.0.0.1", port, wrongPin, 1920, 1080, ct); }, "wrong server certificate rejected before pairing secret is sent");
 await Ignore(accept);
 
 // Authenticated peer goes silent without closing its socket: watchdog must recover.
 accept = Accept();
-using var stallClient = await Connection.ConnectAsync("127.0.0.1", port, invitation, 1920, 1080, ct);
-using var stallServer = await accept;
+await using var stallClient = await Connection.ConnectAsync("127.0.0.1", port, invitation, 1920, 1080, ct);
+await using var stallServer = await accept;
 var watch = Stopwatch.StartNew();
 await Reject(() => stallClient.RunAsync(ct), "silent connection watchdog fires");
 Check(watch.Elapsed.TotalSeconds < 3 && !stallClient.IsAlive, "silent-peer recovery occurs within three seconds");
-stallClient.Finish(); stallServer.Finish(); listener.Stop();
-Console.WriteLine($"All {passed} checks passed.");
+await stallClient.DisposeAsync(); await stallServer.DisposeAsync(); listener.Stop();
 await DiscoveryPairingTests.Run(Check);
+await LifecycleTests.Run(Check);
 Console.WriteLine($"All {passed} checks passed including discovery and confirmed pairing.");
 static void CheckSilent(bool value) { if (!value) throw new Exception("Queue rejected coalescible motion."); }
