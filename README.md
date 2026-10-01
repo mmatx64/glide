@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.6.2** preserves network bursts through receiver dispatch and removes unnecessary receiving-side mouse hooks to further reduce remote scrolling overhead. User-initiated GitHub updates include verified downloads, administrator app/service replacement, settings preservation, and rollback. The optional service starts Glide elevated at sign-in for credential dialogs and administrator applications on the normal desktop. This is preview software; service mode still needs two-PC testing.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.6.3** adds remote wake requests for standard non-password screensavers; two-PC acceptance is pending. It retains v0.6.2's receive-path scrolling improvements. User-initiated GitHub updates include verified downloads, administrator app/service replacement, settings preservation, and rollback. The optional service starts Glide elevated at sign-in for credential dialogs and administrator applications on the normal desktop. This is preview software; service mode still needs two-PC testing.
 
-**[Download Glide v0.6.2 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.6.2/Glide-0.6.2-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.6.2)
+**[Download Glide v0.6.3 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.6.3/Glide-0.6.3-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.6.3)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -33,7 +33,7 @@ The updater only handles public releases outside GitHub's prerelease channel, wi
 
 Service mode automatically starts Glide elevated at sign-in, so normal-desktop Windows credential dialogs and administrator applications can receive shared input without relaunching Glide as administrator. Install it on the receiving PC, or on both PCs if you reverse roles. It supports **one enrolled Windows administrator account and the active physical console session** per PC. It does not control lock screens, UAC secure desktops, Ctrl+Alt+Delete, other users' sessions, or RDP sessions.
 
-1. Quit the portable Glide instance. Extract the v0.6.2 package into a writable folder.
+1. Quit the portable Glide instance. Extract the v0.6.3 package into a writable folder.
 2. From PowerShell in that folder, run `.\Install-Service.ps1`. Approve the one-time Windows administrator prompt **as the same Windows account that will use Glide**. To retain a portable pairing, instead run `.\Install-Service.ps1 -SettingsPath 'C:\path\to\existing\Glide.ini'`. A first installation otherwise imports the blank INI beside the installer. Updates preserve the installed settings.
 3. Open **Glide (service)** from the Start menu, or use its tray icon. No administrator prompt is needed for normal reopening. The title says **SERVICE**. A paired app starts hidden at sign-in; a fresh installation opens for setup. For a fresh pairing, initiate **Pair & connect from the service PC** and confirm the code there, then reverse roles if needed. An unpaired service session does not accept unattended incoming first-pair requests. If installing service mode on both unpaired PCs, pair them in portable mode first, then import each PC's own INI during installation.
 
@@ -101,6 +101,7 @@ These changes target plausible causes of handoff lag. They cannot eliminate Wi-F
 - Control originates from the designated controlling PC. This is not automatic bidirectional ownership switching between both physical keyboards.
 - Handoff begins only when no key/button is held. Dragging windows/files across PCs is unsupported. The controlling PC's pointer is parked on its main display while remotely controlling the other PC.
 - Portable mode cannot control higher-privilege applications unless launched elevated. Service mode supports those windows on the normal desktop. Windows secure desktops, UAC elevation prompts, lock screens, and Ctrl+Alt+Delete still require local control. If Windows blocks injection, Glide disconnects.
+- v0.6.3 asks standard Windows screensavers without password protection to close when active remote input arrives. Idle connections leave the screensaver alone. The first event may only wake the screen; continue moving or type again afterward. Password-protected screensavers still require local sign-in; custom savers that ignore injected input and use a different window class may require local dismissal.
 - Use on trusted local networks. Discovery broadcasts every two seconds and removes absent peers after seven seconds; it is bounded to 32 peers. There is no WAN relay. Networking is IPv4. Complex multi-adapter, VPN, and guest-network discovery still needs physical validation.
 - Unsigned development executable; there is no code-signing certificate. Updates in v0.6.0 are explicitly initiated by the user.
 - v0.6.1 improved fast remote scrolling somewhat in user testing; v0.6.2 extends batching through the network receive path and removes redundant receiver mouse hooks. Automated checks preserve exact events and stop behavior; elimination of the remaining delay still needs two-PC acceptance. Tracked as [BUG-001](https://github.com/mmatx64/glide/blob/main/ISSUES.md).
@@ -141,7 +142,7 @@ The optional `--benchmark` runs synthetic encrypted loopback traffic without inp
 2. Make 50 crossings in both directions. Observe the first few movements after each crossing and the RTT readout, first on Ethernet and then on your usual network.
 3. Type mixed case and shortcuts in a disposable text document; test click, double-click, scroll, and dragging within the receiving PC. Start with opposite Num Lock states on the PCs: check keypad 0–9 and decimal with the controller's Num Lock on, then keypad navigation with it off. Toggle Num Lock while remote and check the controlling keyboard's light, Shift+keypad, dedicated arrows/Home/End/Delete, and keypad Enter/operators. Hold a keypad key across a Num Lock/Shift change, then release it and return locally; check that no key stays held or gets swallowed.
 4. Hold a key on the remote PC, disconnect its network, and verify local control returns and the receiver releases held input. Test Ctrl+Alt+F12 on both PCs.
-5. Test sleep/wake, pause/resume, display changes, differing display scales, and reconnect after closing/reopening the receiving app.
+5. Test sleep/wake, pause/resume, display changes, differing display scales, and reconnect after closing/reopening the receiving app. Let a non-password screensaver start on the receiver, then cross to it or move/type/scroll if already remote: it should dismiss and input should resume. Repeat in portable/service mode, ensure an idle connection still allows the saver to start, and confirm a password-protected saver still requires local sign-in.
 
 ## Code map
 

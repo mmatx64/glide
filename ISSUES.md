@@ -1,5 +1,13 @@
 # Glide work tracker
 
+## BUG-002: Receiving PC stops responding while its screensaver runs
+
+Fix implemented in v0.6.3; **two-PC acceptance pending**. Reported October 1, 2026. The receiving PC's screensaver ignores remote input; dismissing it with its own mouse restores Glide without sign-in or restarting. The controlling PC has not been tested for this report.
+
+Glide now checks for a running non-password screensaver when authenticated receiver activation, movement, keyboard, buttons or wheel input arrives. On the active normal desktop it posts `WM_CLOSE` only to the standard `WindowsScreenSaverClass` window. Checks/retries are limited to once per 250 ms; posting does not wait for the saver. Idle connections, Release, inactive receiver input, stale sessions and controller-side incoming input do not trigger wake requests. No Windows screensaver settings are changed. Secure desktops/password-protected savers remain local-control cases, and custom window classes are not explicitly targeted.
+
+Automated coverage checks wake gating through the production receiver loop with mock injection, exact wheel batching and existing stop behavior, secure/inactive/absent-saver guards, bounded retries, and real Win32 lookup/posting to a uniquely named hidden test window. It does not activate a real screensaver or prove the affected two-PC case. Acceptance: receiver saver dismisses on edge crossing or subsequent remote movement/typing/scrolling, input resumes without local intervention, and idle sessions still allow screen saving. The first event may only dismiss the saver.
+
 ## BUG-001: Fast remote wheel scrolling lags
 
 Open; **v0.6.1 produced a small improvement in user testing, with lag still reported across apps. v0.6.2 adds further receive-path improvements**, awaiting two-PC acceptance. Reported October 1, 2026. Fast/accelerated wheel scrolling up and down has a noticeable delay on the receiving PC. Slow scrolling appears normal. The affected mouse/driver and network conditions still need recording.

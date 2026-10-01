@@ -1,5 +1,13 @@
 # Glide validation — October 1, 2026
 
+## v0.6.3: receiver screensaver wake
+
+- User report: the receiving PC stops responding while its screensaver runs. Local mouse dismissal restores Glide without a password/PIN or restart; the controller case has not been tested.
+- Active authenticated receiver input now posts a close request to the standard `WindowsScreenSaverClass` window when Windows reports a running non-password saver and the input thread's desktop is active. Queries/retries are capped at once per 250 ms. Idle timers/heartbeats, Release, inactive receiver input, stale peers and incoming input on a controller do not wake it. No timeout, password or power settings are changed. Requests are asynchronous so saver responsiveness cannot stall the input loop.
+- New native checks cover secure/inactive/absent-saver guards, missing windows, throttling/retry, activation/movement/keys/buttons and batched wheels through the production receiver loop, and actual Win32 lookup/posted close delivery to a uniquely named hidden test window. Mock input tests suppress real screensaver wake actions. No real saver is launched and no input is injected into the user's desktop.
+- **Full `build.ps1 -SkipLocalCopy` passed:** all 99 core checks, 20 NativeAOT smoke checks and three offline service-cleanup scenarios. Version `0.6.3.0`; package `dist/Glide-0.6.3-win-x64.zip` and `dist/SHA256SUMS-0.6.3.txt`. Existing local apps/service/settings remain intact.
+- **Two-PC acceptance pending:** let the receiver's non-password saver start both before edge crossing and while already controlling it; try movement, typing and scrolling in portable/service mode. The first event may only wake the saver. Verify idle sessions still allow screen saving and password-protected savers still require local sign-in. Custom savers with other window classes may still require local dismissal. Tracked as BUG-002 in `ISSUES.md`.
+
 ## v0.6.2: preserve wheel bursts through TLS receive
 
 - User feedback: v0.6.1 improved fast remote scrolling slightly, but lag remains across applications. The earlier blocked-queue test verified batching once input accumulated; it did not measure how production TLS delivery feeds the receiver.

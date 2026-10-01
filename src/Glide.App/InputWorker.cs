@@ -14,6 +14,7 @@ internal sealed class InputWorker : IDisposable
     private readonly (Connection Peer, Packet Packet)[] incomingBatch = new (Connection, Packet)[32];
     internal delegate uint InputSender(ReadOnlySpan<Input> inputs);
     private readonly InputSender sendInput;
+    private readonly Action wakeScreenSaver;
     private readonly HookProc mouseProc, keyProc;
     private readonly bool[] physical = new bool[256], suppressed = new bool[768];
     private readonly Dictionary<int, Packet> heldKeys = new();
@@ -36,9 +37,11 @@ internal sealed class InputWorker : IDisposable
     private const nuint Tag = 0x474c4944;
     private const uint Work = WM_APP + 10, Incoming = WM_APP + 11;
 
-    internal InputWorker(InputSender? sendInput = null)
+    internal InputWorker(InputSender? sendInput = null, Action? wakeScreenSaver = null)
     {
         this.sendInput = sendInput ?? SendNativeInput;
+        // Mock injection must also avoid changing the user's real screensaver.
+        this.wakeScreenSaver = wakeScreenSaver ?? (sendInput is null ? new ScreenSaver().Wake : () => { });
         mouseProc = Mouse; keyProc = Keyboard;
         thread = new Thread(Loop) { IsBackground = true, Name = "Glide input" };
         thread.Start(); ready.Wait();
@@ -149,6 +152,7 @@ internal sealed class InputWorker : IDisposable
                     }
                     // Separate INPUT records retain small deltas, reversals and
                     // wheel axes. Do not sum them or cross a key/button/move barrier.
+                    wakeScreenSaver();
                     Inject(wheels[..length], true);
                 }
                 else Apply(item.Packet);
@@ -281,6 +285,8 @@ internal sealed class InputWorker : IDisposable
         if (connection is not { IsAlive: true }) return;
         if (packet.Kind == MessageKind.Release) { if (controller && remote) ReturnLocal(); Reset(); return; }
         if (controller) throw new InvalidDataException("Peer sent unexpected input.");
+        if (packet.Kind == MessageKind.Activate || (receiving && packet.Kind is MessageKind.Move or MessageKind.Key or MessageKind.Button))
+            wakeScreenSaver();
         if (packet.Kind == MessageKind.Activate)
         { Reset(); receiving = true; Move(packet.A, packet.B); return; }
         if (!receiving) return;
