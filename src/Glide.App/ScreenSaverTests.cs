@@ -10,6 +10,10 @@ internal static class ScreenSaverTests
 {
     internal static void Run(List<string> lines)
     {
+        if (!ScreenSaver.AllowedDesktop("Default") || !ScreenSaver.AllowedDesktop("Screen-saver")
+            || !ScreenSaver.AllowedDesktop("ScreenSaver") || ScreenSaver.AllowedDesktop("Winlogon")
+            || ScreenSaver.AllowedDesktop("Other user desktop"))
+            throw new Exception("Screensaver desktop selection admitted an unsupported desktop.");
         bool active = true, running = true, secure = false;
         nint target = 123;
         int searches = 0, closes = 0;
@@ -50,6 +54,53 @@ internal static class ScreenSaverTests
         }
         finally { DestroyWindow(window); GC.KeepAlive(proc); }
         lines.Add("PASS active receiver movement/keys/buttons/batched wheels request wake; idle/Release/inactive/stale/controller input does not; real posted WM_CLOSE closes only the hidden test window (no desktop input)");
+        BuiltinSavers(lines);
+    }
+
+    private static void BuiltinSavers(List<string> lines)
+    {
+        foreach (string filename in new[] { "scrnsave.scr", "Bubbles.scr", "Mystify.scr", "Ribbons.scr", "ssText3d.scr", "PhotoScreensaver.scr" })
+        {
+            string path = Path.Combine(Environment.SystemDirectory, filename);
+            if (!File.Exists(path)) { lines.Add("SKIP absent Windows saver " + filename); continue; }
+            string name = "Glide.SaverTest." + Guid.NewGuid().ToString("N");
+            nint desktop = CreateDesktop(name, 0, 0, 0, 0x1ff, 0);
+            if (desktop == 0) throw new Exception("Could not create isolated saver desktop.");
+            ServiceNative.ProcessInfo process = default;
+            try
+            {
+                var startup = new ServiceNative.StartupInfo
+                { Size = Marshal.SizeOf<ServiceNative.StartupInfo>(), Desktop = "winsta0\\" + name };
+                if (!CreateProcess(path, new System.Text.StringBuilder("\"" + path + "\" /s"), 0, 0, false, 0, 0, null, ref startup, out process))
+                    throw new Exception("Could not launch test saver " + filename);
+                ServiceNative.CloseHandle(process.Thread); process.Thread = 0;
+                nint window = 0;
+                if (!SpinWait.SpinUntil(() => (window = ScreenSaver.FindSaverWindow(desktop)) != 0, TimeSpan.FromSeconds(5)))
+                    throw new Exception("Actual saver window was not discovered: " + filename);
+                var className = new System.Text.StringBuilder(256);
+                GetClassName(window, className, className.Capacity);
+                // Same lookup and asynchronous close used in production, with
+                // the isolated test desktop and known non-password test state.
+                var saver = new ScreenSaver(() => true, () => true, () => false,
+                    () => ScreenSaver.FindSaverWindow(desktop));
+                saver.Wake();
+                if (ServiceNative.WaitForSingleObject(process.Process, 5000) != 0)
+                    throw new Exception("Actual saver did not exit after wake: " + filename);
+                lines.Add($"PASS actual Windows {filename} ({className}) discovered and dismissed on an isolated desktop; no screen switch/settings change/input injection");
+            }
+            finally
+            {
+                // Only clean up the child launched by this test, never a user's saver.
+                if (process.Process != 0)
+                {
+                    if (ServiceNative.WaitForSingleObject(process.Process, 0) != 0)
+                    { ServiceNative.TerminateProcess(process.Process, 1); ServiceNative.WaitForSingleObject(process.Process, 3000); }
+                    ServiceNative.CloseHandle(process.Process);
+                }
+                if (process.Thread != 0) ServiceNative.CloseHandle(process.Thread);
+                CloseDesktop(desktop);
+            }
+        }
     }
 
     private static async Task ReceiverWake(string className)

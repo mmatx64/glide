@@ -1,5 +1,13 @@
 # Glide validation — October 1, 2026
 
+## v0.6.4: actual built-in screensaver discovery
+
+- User feedback: v0.6.3 still cannot wake a built-in receiver screensaver; Glide stays Connected. The earlier mock-window check did not establish compatibility with the built-in savers.
+- Reproduced the discovery gap with actual Windows 11 saver executables on isolated desktops: Blank uses `Blank Screen Saver`; Bubbles, Mystify, Ribbons and 3D Text use `D3DSaverWndClass`; Photos uses `WindowsScreenSaverClass`. Five of the six were excluded by v0.6.3's class lookup. All accepted an asynchronous close request in the probe.
+- Production lookup now enumerates recognized saver classes on the active input desktop. Default, Screen-saver and ScreenSaver are allowed; Winlogon and other names are rejected. Password protection and running-saver checks remain; Glide's hook thread does not switch desktops. Queries remain bounded to 250 ms retries on active authenticated receiver input, with no idle wake or settings changes.
+- Added self-tests that launch all six installed built-in saver executables on unique private desktops, discover their real windows using production code, post the production close request and wait for each child to exit. Tests do not switch the visible desktop, inject input or change screensaver settings. Cleanup is limited to the exact child created by the test. Missing built-in saver files are reported as skipped.
+- Managed self-test passed all six actual-saver cases, existing receiver-loop input gating, password/desktop guards, wheel order/batching, emergency handling and connection lifecycle checks. The actual idle-triggered receiver/two-PC case is still pending acceptance.
+
 ## v0.6.3: receiver screensaver wake
 
 - User report: the receiving PC stops responding while its screensaver runs. Local mouse dismissal restores Glide without a password/PIN or restart; the controller case has not been tested.

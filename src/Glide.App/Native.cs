@@ -8,6 +8,7 @@ internal static class Native
         WM_TIMER = 0x113, WM_HOTKEY = 0x312, WM_APP = 0x8000;
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] internal delegate nint WindowProc(nint window, uint message, nuint wParam, nint lParam);
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] internal delegate nint HookProc(int code, nuint wParam, nint lParam);
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)] internal delegate bool EnumWindowProc(nint window, nint parameter);
     [StructLayout(LayoutKind.Sequential)] internal struct Point { public int X, Y; public Point(int x, int y) { X = x; Y = y; } }
     [StructLayout(LayoutKind.Sequential)] internal struct Rect
     {
@@ -64,10 +65,15 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern nint CallNextHookEx(nint hook, int code, nuint p, nint l);
     [DllImport("user32.dll")] internal static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] internal static extern bool GetCursorPos(out Point point);
-    [DllImport("user32.dll")] internal static extern nint GetThreadDesktop(uint thread);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool GetUserObjectInformation(nint handle, int index, out int value, uint length, out uint needed);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool SystemParametersInfo(uint action, uint parameter, out int value, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint FindWindow(string className, string? title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint OpenInputDesktop(uint flags, bool inherit, uint access);
+    [DllImport("user32.dll")] internal static extern bool CloseDesktop(nint desktop);
+    [DllImport("user32.dll")] internal static extern bool EnumDesktopWindows(nint desktop, EnumWindowProc callback, nint parameter);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetClassName(nint window, System.Text.StringBuilder text, int length);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool GetUserObjectInformation(nint handle, int index, System.Text.StringBuilder value, uint length, out uint needed);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern nint CreateDesktop(string name, nint device, nint mode, uint flags, uint access, nint attributes);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool CreateProcess(string application, System.Text.StringBuilder command, nint processAttributes, nint threadAttributes, bool inherit, uint flags, nint environment, string? directory, ref ServiceNative.StartupInfo startup, out ServiceNative.ProcessInfo process);
     [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] internal static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(nint w);
