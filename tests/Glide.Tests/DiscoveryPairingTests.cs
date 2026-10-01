@@ -49,30 +49,52 @@ internal static class DiscoveryPairingTests
         {
             var serverPrompt = new TaskCompletionSource<PairingPrompt>(TaskCreationOptions.RunContinuationsAsynchronously);
             var clientPrompt = new TaskCompletionSource<PairingPrompt>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var serverDecision = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var clientDecision = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var serverTask = Accept();
             async Task<PairedPeer> Accept() => await EasyPairing.AcceptAsync(await listener.AcceptTcpClientAsync(ct), other,
-                async (prompt, token) => { serverPrompt.TrySetResult(prompt); return await serverDecision.Task.WaitAsync(token); }, ct);
-            var clientTask = EasyPairing.RequestAsync("127.0.0.1", port, other.Fingerprint, "DESKTOP", Invitation.Parse(local.Invitation),
-                (prompt, _) => { clientPrompt.TrySetResult(prompt); return Task.FromResult(true); }, ct);
+                (prompt, _) => { serverPrompt.TrySetResult(prompt); return Task.FromResult(true); }, ct,
+                fingerprint => fingerprint.AsSpan().SequenceEqual(local.Fingerprint));
+            var clientTask = EasyPairing.RequestAsync("127.0.0.1", port, other.Fingerprint, "DESKTOP", local,
+                async (prompt, token) => { clientPrompt.TrySetResult(prompt); return await clientDecision.Task.WaitAsync(token); }, ct);
             var shownServer = await serverPrompt.Task.WaitAsync(ct); var shownClient = await clientPrompt.Task.WaitAsync(ct);
             await Task.Delay(80, ct);
-            check(!clientTask.IsCompleted && !serverTask.IsCompleted, "credentials withheld until both PCs approve");
+            check(!clientTask.IsCompleted && !serverTask.IsCompleted, "passive receiver withholds credentials until initiator verifies");
             check(shownServer.Code == shownClient.Code && shownServer.PeerName == "DESKTOP", "both PCs show the same session confirmation code");
-            serverDecision.SetResult(true);
+            clientDecision.SetResult(true);
             var invitation = await clientTask; var paired = await serverTask;
             check(invitation.Encode() == other.Invitation && paired.Invitation.Encode() == local.Invitation, "confirmed pairing exchanges both identities over TLS for role reversal");
 
-            var rejectServer = Task.Run(async () => await EasyPairing.AcceptAsync(await listener.AcceptTcpClientAsync(ct), other, (_, _) => Task.FromResult(false), ct));
-            bool canceledPrompt = false;
-            var rejectClient = EasyPairing.RequestAsync("127.0.0.1", port, other.Fingerprint, "DESKTOP", Invitation.Parse(local.Invitation),
-                async (_, token) => { try { await Task.Delay(Timeout.Infinite, token); } catch (OperationCanceledException) { canceledPrompt = true; } return false; }, ct);
-            check(await Failed(rejectClient) && await Failed(rejectServer) && canceledPrompt, "rejection aborts pairing and cancels the other PC's pending prompt");
+            bool strangerShown = false;
+            using var stranger = new PairingIdentity();
+            var lockedServer = Task.Run(async () => await EasyPairing.AcceptAsync(await listener.AcceptTcpClientAsync(ct), other,
+                (_, _) => { strangerShown = true; return Task.FromResult(true); }, ct,
+                fingerprint => fingerprint.AsSpan().SequenceEqual(local.Fingerprint)));
+            var strangerClient = EasyPairing.RequestAsync("127.0.0.1", port, other.Fingerprint, "DESKTOP", stranger, (_, _) => Task.FromResult(true), ct);
+            check(await Failed(strangerClient) && await Failed(lockedServer) && !strangerShown, "same-name stranger cannot replace a remembered PC without its private key");
+
+            var declinedServer = Task.Run(async () => await EasyPairing.AcceptAsync(await listener.AcceptTcpClientAsync(ct), other, (_, _) => Task.FromResult(true), ct));
+            var declinedClient = EasyPairing.RequestAsync("127.0.0.1", port, other.Fingerprint, "DESKTOP", local, (_, _) => Task.FromResult(false), ct);
+            check(await Failed(declinedClient) && await Failed(declinedServer), "initiator rejection aborts passive receiving side");
+
+            bool available = true;
+            var revokedServer = Task.Run(async () => await EasyPairing.AcceptAsync(await listener.AcceptTcpClientAsync(ct), other,
+                (_, _) => Task.FromResult(true), ct, _ => Volatile.Read(ref available)));
+            var revokedClient = EasyPairing.RequestAsync("127.0.0.1", port, other.Fingerprint, "DESKTOP", local,
+                (_, _) => { Volatile.Write(ref available, false); return Task.FromResult(true); }, ct);
+            check(await Failed(revokedClient) && await Failed(revokedServer), "permission revoked during verification prevents credential release");
+
+            var clientWaiting = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var rejectServer = Task.Run(async () => await EasyPairing.AcceptAsync(await listener.AcceptTcpClientAsync(ct), other,
+                async (_, token) => { await clientWaiting.Task.WaitAsync(token); return false; }, ct));
+            var canceledPrompt = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var rejectClient = EasyPairing.RequestAsync("127.0.0.1", port, other.Fingerprint, "DESKTOP", local,
+                async (_, token) => { clientWaiting.TrySetResult(true); try { await Task.Delay(Timeout.Infinite, token); } catch (OperationCanceledException) { canceledPrompt.TrySetResult(true); } return false; }, ct);
+            check(await Failed(rejectClient) && await Failed(rejectServer) && await canceledPrompt.Task.WaitAsync(ct), "rejection aborts pairing and cancels the other PC's pending prompt");
 
             bool approvalCalled = false;
             var badPinServer = Task.Run(async () => await EasyPairing.AcceptAsync(await listener.AcceptTcpClientAsync(ct), other,
                 (_, _) => { approvalCalled = true; return Task.FromResult(true); }, ct));
-            var badPinClient = EasyPairing.RequestAsync("127.0.0.1", port, local.Fingerprint, "DESKTOP", Invitation.Parse(local.Invitation), (_, _) => Task.FromResult(true), ct);
+            var badPinClient = EasyPairing.RequestAsync("127.0.0.1", port, local.Fingerprint, "DESKTOP", local, (_, _) => Task.FromResult(true), ct);
             check(await Failed(badPinClient) && await Failed(badPinServer) && !approvalCalled, "spoofed discovery fingerprint cannot reach pairing approval");
 
             // A sender that changes its nonce after learning the receiver nonce is rejected.
@@ -80,8 +102,10 @@ internal static class DiscoveryPairingTests
                 (_, _) => { approvalCalled = true; return Task.FromResult(true); }, ct));
             using var rawClient = new TcpClient(); await rawClient.ConnectAsync(IPAddress.Loopback, port, ct);
             using var tls = new SslStream(rawClient.GetStream(), false, (_, certificate, _, _) => certificate is not null && certificate.GetCertHash(HashAlgorithmName.SHA256).AsSpan().SequenceEqual(other.Fingerprint));
-            await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions { TargetHost = "Glide", EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, ct);
-            var hello = new byte[104]; "GLPAIR02"u8.CopyTo(hello); hello[8] = 1; hello[9] = (byte)'X';
+            await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions { TargetHost = "Glide", ClientCertificates = new() { local.Certificate },
+                LocalCertificateSelectionCallback = (_, _, _, _, _) => local.Certificate,
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, ct);
+            var hello = new byte[104]; "GLPAIR03"u8.CopyTo(hello); hello[8] = 1; hello[9] = (byte)'X';
             EasyPairing.Commitment(nonce, other.Fingerprint).CopyTo(hello, 72);
             await tls.WriteAsync(hello, ct); await tls.ReadExactlyAsync(new byte[32], ct);
             await tls.WriteAsync(RandomNumberGenerator.GetBytes(32), ct);

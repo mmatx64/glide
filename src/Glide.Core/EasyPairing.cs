@@ -19,7 +19,7 @@ public static class EasyPairing
         string code = Convert.ToHexString(SHA256.HashData("Glide compare v2"u8.ToArray().Concat(fingerprint).Concat(clientNonce).Concat(serverNonce).ToArray()))[..12];
         return $"{code[..4]} {code[4..8]} {code[8..]}";
     }
-    public static async Task<Invitation> RequestAsync(string host, int port, byte[] fingerprint, string name, Invitation localInvitation,
+    public static async Task<Invitation> RequestAsync(string host, int port, byte[] fingerprint, string name, PairingIdentity localIdentity,
         Func<PairingPrompt, CancellationToken, Task<bool>> approve, CancellationToken cancellation)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -31,9 +31,12 @@ public static class EasyPairing
         await client.ConnectAsync(host, port, connectTimeout.Token).ConfigureAwait(false);
         using var stream = new SslStream(client.GetStream(), false, (_, certificate, _, _) => certificate is not null &&
             CryptographicOperations.FixedTimeEquals(certificate.GetCertHash(HashAlgorithmName.SHA256), fingerprint));
-        await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions { TargetHost = "Glide pairing", EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, connectTimeout.Token).ConfigureAwait(false);
+        await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions { TargetHost = "Glide pairing",
+            ClientCertificates = new() { localIdentity.Certificate },
+            LocalCertificateSelectionCallback = (_, _, _, _, _) => localIdentity.Certificate,
+            EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, connectTimeout.Token).ConfigureAwait(false);
         byte[] clientNonce = RandomNumberGenerator.GetBytes(32);
-        byte[] hello = new byte[104]; "GLPAIR02"u8.CopyTo(hello);
+        byte[] hello = new byte[104]; "GLPAIR03"u8.CopyTo(hello);
         byte[] encodedName = Encoding.ASCII.GetBytes(Announcement.CleanName(name));
         hello[8] = (byte)encodedName.Length; encodedName.CopyTo(hello, 9);
         Commitment(clientNonce, fingerprint).CopyTo(hello, 72);
@@ -46,7 +49,7 @@ public static class EasyPairing
         if (!CryptographicOperations.FixedTimeEquals(credentials.AsSpan(0, 32), fingerprint)) throw new AuthenticationException("Pairing identity changed.");
         var result = new Invitation(credentials[..32], credentials[32..]);
         CryptographicOperations.ZeroMemory(credentials);
-        byte[] ownCredentials = localInvitation.Fingerprint.Concat(localInvitation.Secret).ToArray();
+        byte[] ownCredentials = localIdentity.Fingerprint.Concat(localIdentity.Secret).ToArray();
         try { await stream.WriteAsync(ownCredentials, ct).ConfigureAwait(false); }
         finally { CryptographicOperations.ZeroMemory(ownCredentials); }
         var acknowledged = new byte[1]; await stream.ReadExactlyAsync(acknowledged, ct).ConfigureAwait(false);
@@ -55,7 +58,8 @@ public static class EasyPairing
     }
 
     public static async Task<PairedPeer> AcceptAsync(TcpClient client, PairingIdentity identity,
-        Func<PairingPrompt, CancellationToken, Task<bool>> approve, CancellationToken cancellation)
+        Func<PairingPrompt, CancellationToken, Task<bool>> approve, CancellationToken cancellation,
+        Func<byte[], bool>? authorizeRequester = null)
     {
         using (client)
         using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
@@ -64,10 +68,18 @@ public static class EasyPairing
             using var handshakeTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             handshakeTimeout.CancelAfter(TimeSpan.FromSeconds(6));
             client.NoDelay = true;
-            using var stream = new SslStream(client.GetStream(), false);
-            await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions { ServerCertificate = identity.Certificate, EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, handshakeTimeout.Token).ConfigureAwait(false);
+            byte[]? requesterFingerprint = null;
+            using var stream = new SslStream(client.GetStream(), false, (_, certificate, _, _) =>
+            {
+                if (certificate is null) return false;
+                requesterFingerprint = certificate.GetCertHash(HashAlgorithmName.SHA256);
+                return authorizeRequester?.Invoke(requesterFingerprint) ?? true;
+            });
+            await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions { ServerCertificate = identity.Certificate,
+                ClientCertificateRequired = true, EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, handshakeTimeout.Token).ConfigureAwait(false);
+            if (requesterFingerprint is null) throw new AuthenticationException("The requesting PC did not prove its identity.");
             var hello = new byte[104]; await stream.ReadExactlyAsync(hello, handshakeTimeout.Token).ConfigureAwait(false);
-            if (!hello.AsSpan(0, 8).SequenceEqual("GLPAIR02"u8) || hello[8] is < 1 or > 63) throw new InvalidDataException("Invalid pairing request.");
+            if (!hello.AsSpan(0, 8).SequenceEqual("GLPAIR03"u8) || hello[8] is < 1 or > 63) throw new InvalidDataException("Invalid pairing request. Update Glide on both PCs.");
             string name = Encoding.ASCII.GetString(hello, 9, hello[8]);
             if (Announcement.CleanName(name) != name) throw new InvalidDataException("Invalid PC name.");
             byte[] fingerprint = identity.Fingerprint;
@@ -79,10 +91,15 @@ public static class EasyPairing
             string code = ComparisonCode(fingerprint, clientNonce, serverNonce);
             string address = ((IPEndPoint)client.Client.RemoteEndPoint!).Address.ToString();
             await ConfirmBoth(stream, token => approve(new(name, address, code, true), token), ct).ConfigureAwait(false);
+            // Pause/hide may revoke permission while the initiator is checking the code.
+            if (authorizeRequester is not null && !authorizeRequester(requesterFingerprint))
+                throw new AuthenticationException("Pairing is no longer available on this PC.");
             byte[] credentials = fingerprint.Concat(identity.Secret).ToArray();
             try { await stream.WriteAsync(credentials, ct).ConfigureAwait(false); }
             finally { CryptographicOperations.ZeroMemory(credentials); }
             var peerCredentials = new byte[64]; await stream.ReadExactlyAsync(peerCredentials, ct).ConfigureAwait(false);
+            if (!CryptographicOperations.FixedTimeEquals(peerCredentials.AsSpan(0, 32), requesterFingerprint))
+                throw new AuthenticationException("The requesting PC changed its pairing identity.");
             var invitation = new Invitation(peerCredentials[..32], peerCredentials[32..]);
             CryptographicOperations.ZeroMemory(peerCredentials);
             await stream.WriteAsync(new byte[] { 1 }, ct).ConfigureAwait(false);
@@ -123,7 +140,8 @@ public sealed class PairingServer : IDisposable
     public string? Error { get; private set; }
     private volatile bool isPairing;
     public bool IsPairing => isPairing;
-    public PairingServer(PairingIdentity identity, Func<PairingPrompt, CancellationToken, Task<bool>> approve, Func<bool> available, int port = EasyPairing.Port)
+    public PairingServer(PairingIdentity identity, Func<PairingPrompt, CancellationToken, Task<bool>> approve, Func<bool> available,
+        Func<byte[], bool> authorizeRequester, int port = EasyPairing.Port)
     {
         listener = new TcpListener(IPAddress.Any, port); listener.Start(4);
         task = Task.Run(async () =>
@@ -136,7 +154,7 @@ public sealed class PairingServer : IDisposable
                     var client = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
                     if (!available()) { client.Dispose(); continue; }
                     isPairing = true;
-                    try { Paired?.Invoke(await EasyPairing.AcceptAsync(client, identity, approve, ct).ConfigureAwait(false)); }
+                    try { Paired?.Invoke(await EasyPairing.AcceptAsync(client, identity, approve, ct, authorizeRequester).ConfigureAwait(false)); }
                     catch (Exception ex) when (!ct.IsCancellationRequested) { Error = ex.Message; Failed?.Invoke(ex.Message); }
                     finally { isPairing = false; }
                     await Task.Delay(1000, ct).ConfigureAwait(false);

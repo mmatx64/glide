@@ -15,6 +15,8 @@ internal static class NativeTests
             if (Marshal.SizeOf<Native.Input>() != 40) throw new Exception("x64 INPUT layout is wrong.");
             if (Marshal.SizeOf<Native.MouseHook>() != 32 || Marshal.SizeOf<Native.KeyHook>() != 24) throw new Exception("Hook layout is wrong.");
             lines.Add("PASS Win32 x64 input structures");
+            WindowTextTest();
+            lines.Add("PASS Unicode window title and edit text round-trip");
             string path = System.IO.Path.Combine(directory, "test.ini");
             var settings = new Settings(path) { Host = "192.168.1.10", Role = "Controller", RemoteOnRight = false, AutoConnect = false, DiscoveryEnabled = true, PeerName = "LAPTOP" };
             using var identity = new PairingIdentity();
@@ -29,7 +31,7 @@ internal static class NativeTests
             TransportTest().GetAwaiter().GetResult();
             lines.Add("PASS native AOT TLS authentication, input echo, and disconnect");
             PairingTest().GetAwaiter().GetResult();
-            lines.Add("PASS native AOT discovery and mutual confirmed pairing");
+            lines.Add("PASS native AOT discovery and one-sided verified pairing with client identity proof");
             using (var engine = new Engine())
             {
                 for (int i = 0; i < 3; i++)
@@ -51,6 +53,28 @@ internal static class NativeTests
             lines.Add("FAIL " + ex); File.WriteAllLines(System.IO.Path.Combine(directory, "results.txt"), lines); return 1;
         }
     }
+    private static void WindowTextTest()
+    {
+        Native.WindowProc proc = Native.DefWindowProc;
+        var wc = new Native.WindowClass { Size = (uint)Marshal.SizeOf<Native.WindowClass>(), Proc = proc,
+            Instance = Native.GetModuleHandle(null), Name = "Glide.UnicodeTest" };
+        if (Native.RegisterClassEx(ref wc) == 0) throw new Exception("Test window registration failed.");
+        nint window = Native.CreateWindowEx(0, wc.Name, "Glide · Δ", 0, 0, 0, 100, 100, 0, 0, wc.Instance, 0);
+        if (window == 0) throw new Exception("Test window creation failed.");
+        try
+        {
+            var text = new System.Text.StringBuilder(64);
+            Native.GetWindowText(window, text, text.Capacity);
+            if (text.ToString() != "Glide · Δ") throw new Exception("Unicode title was truncated.");
+            Native.SetWindowText(window, "Glide – connected");
+            Native.GetWindowText(window, text, text.Capacity);
+            if (text.ToString() != "Glide – connected") throw new Exception("Unicode title update was truncated.");
+            nint edit = Native.CreateWindowEx(0, "EDIT", "PC – 你好", 0x40000000, 0, 0, 80, 20, window, 0, wc.Instance, 0);
+            Native.GetWindowText(edit, text, text.Capacity);
+            if (text.ToString() != "PC – 你好") throw new Exception("Unicode control text was corrupted.");
+        }
+        finally { Native.DestroyWindow(window); GC.KeepAlive(proc); }
+    }
     private static async Task PairingTest()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
@@ -66,7 +90,7 @@ internal static class NativeTests
             var accept = Task.Run(async () => await EasyPairing.AcceptAsync(await listener.AcceptTcpClientAsync(timeout.Token), receiver,
                 (prompt, _) => { serverCode = prompt.Code; return Task.FromResult(true); }, timeout.Token));
             var invitation = await EasyPairing.RequestAsync("127.0.0.1", ((System.Net.IPEndPoint)listener.LocalEndpoint).Port,
-                receiver.Fingerprint, "Sender", Invitation.Parse(sender.Invitation), (prompt, _) => { clientCode = prompt.Code; return Task.FromResult(true); }, timeout.Token);
+                receiver.Fingerprint, "Sender", sender, (prompt, _) => { clientCode = prompt.Code; return Task.FromResult(true); }, timeout.Token);
             var peer = await accept;
             if (invitation.Encode() != receiver.Invitation || peer.Invitation.Encode() != sender.Invitation || clientCode != serverCode)
                 throw new Exception("Native confirmed pairing failed.");

@@ -14,7 +14,7 @@ public sealed record Announcement(string Name, byte[] Fingerprint, bool Receiver
         if (Fingerprint.Length != 32) throw new ArgumentException("Invalid discovery identity.");
         var name = Encoding.UTF8.GetBytes(CleanName(Name));
         var data = new byte[44 + name.Length];
-        "GLIDE002"u8.CopyTo(data); Fingerprint.CopyTo(data, 8);
+        "GLIDE003"u8.CopyTo(data); Fingerprint.CopyTo(data, 8);
         data[40] = (byte)((Receiver ? 1 : 0) | (Connected ? 2 : 0));
         BinaryPrimitives.WriteUInt16LittleEndian(data.AsSpan(41), (ushort)name.Length);
         name.CopyTo(data, 44);
@@ -22,7 +22,7 @@ public sealed record Announcement(string Name, byte[] Fingerprint, bool Receiver
     }
     public static Announcement Decode(ReadOnlySpan<byte> data)
     {
-        if (data.Length is < 44 or > 172 || !data[..8].SequenceEqual("GLIDE002"u8) || data[40] > 3 || data[43] != 0)
+        if (data.Length is < 44 or > 172 || !data[..8].SequenceEqual("GLIDE003"u8) || data[40] > 3 || data[43] != 0)
             throw new InvalidDataException("Invalid discovery announcement.");
         int length = BinaryPrimitives.ReadUInt16LittleEndian(data[41..]);
         if (length != data.Length - 44 || length == 0) throw new InvalidDataException("Invalid discovery name.");

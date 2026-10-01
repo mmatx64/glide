@@ -20,6 +20,8 @@ internal sealed partial class MainWindow
     private string cachedCode = "";
     private Invitation? cachedInvitation;
     private Confirmation? confirmation;
+    private sealed record PairingPolicy(bool Enabled, byte[]? TrustedFingerprint, bool WindowOpen);
+    private volatile PairingPolicy pairingPolicy = new(false, null, false);
     private sealed record Confirmation(PairingPrompt Prompt, TaskCompletionSource<bool> Answer);
     private sealed class WindowContext(MainWindow owner) : SynchronizationContext
     {
@@ -38,10 +40,12 @@ internal sealed partial class MainWindow
         engine.EmergencyStopped += () => PostToUi(() =>
         {
             settings.AutoConnect = false;
+            UpdatePairingPolicy();
             try { settings.Save(); } catch (Exception ex) { message = ex.Message; }
             message = "Emergency stop · sharing remains paused until you press Start.";
         });
         StartDiscoveryServices();
+        UpdatePairingPolicy();
     }
     private void StartDiscoveryServices()
     {
@@ -49,9 +53,16 @@ internal sealed partial class MainWindow
         try
         {
             byte[] fingerprint = identity!.Fingerprint;
-            pairingServer = new PairingServer(identity, ApprovePairing, () => !engine.Connected && !outgoingPair);
+            pairingServer = new PairingServer(identity, ApprovePairing, () => !engine.Connected && !outgoingPair,
+                fingerprint =>
+                {
+                    var policy = pairingPolicy;
+                    return policy.Enabled && (policy.TrustedFingerprint is { } trusted
+                        ? System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(trusted, fingerprint)
+                        : policy.WindowOpen);
+                });
             pairingServer.Paired += name => PostToUi(() => ReceivePaired(name));
-            pairingServer.Failed += reason => PostToUi(() => { message = "Pairing stopped · " + reason; Refresh(); });
+            pairingServer.Failed += reason => PostToUi(() => { confirmation = null; message = "Pairing stopped · " + reason; Refresh(); });
             discovery = new DiscoveryService(fingerprint, () => new Announcement(Environment.MachineName, fingerprint, !controller, engine.Connected));
             discoveryError = "";
         }
@@ -71,6 +82,7 @@ internal sealed partial class MainWindow
         return cachedInvitation;
     }
     private bool IsTrusted(NearbyPeer peer) => TrustedInvitation() is { } trusted && trusted.Fingerprint.AsSpan().SequenceEqual(peer.Info.Fingerprint);
+    private void UpdatePairingPolicy() => pairingPolicy = new(settings.AutoConnect, TrustedInvitation()?.Fingerprint, IsWindowVisible(window));
     private void DiscoverPeers()
     {
         if (discovery is null) return;
@@ -149,18 +161,15 @@ internal sealed partial class MainWindow
             {
                 if (peer.Info.Connected) throw new InvalidOperationException("That PC is already sharing. Pause it there first.");
                 Invitation invitation;
-                if (IsTrusted(peer)) invitation = TrustedInvitation()!;
-                else
+                bool remembered = IsTrusted(peer);
+                if (pairingServer?.IsPairing == true) throw new InvalidOperationException("Finish the incoming pairing request first.");
+                outgoingPair = true; message = "Opening secure pairing…"; Refresh();
+                try
                 {
-                    if (pairingServer?.IsPairing == true) throw new InvalidOperationException("Finish the incoming pairing request first.");
-                    outgoingPair = true; message = "Opening secure pairing…"; Refresh();
-                    try
-                    {
-                        invitation = await EasyPairing.RequestAsync(peer.Address.ToString(), EasyPairing.Port, peer.Info.Fingerprint,
-                            Environment.MachineName, Invitation.Parse(identity!.Invitation), ApprovePairing, windowLifetime.Token);
-                    }
-                    finally { outgoingPair = false; }
+                    invitation = await EasyPairing.RequestAsync(peer.Address.ToString(), EasyPairing.Port, peer.Info.Fingerprint,
+                        Environment.MachineName, identity!, remembered ? (_, _) => Task.FromResult(true) : ApprovePairing, windowLifetime.Token);
                 }
+                finally { outgoingPair = false; }
                 settings.Host = peer.Address.ToString(); settings.PeerName = peer.Info.Name;
                 settings.PairingCode = invitation.Encode(); settings.AutoConnect = true; settings.Save();
                 SetWindowText(controls[Address], settings.Host); SetWindowText(controls[Code], invitation.Encode());
@@ -185,15 +194,19 @@ internal sealed partial class MainWindow
         {
             if (ct.IsCancellationRequested || closed || confirmation is not null || (prompt.Incoming && (outgoingPair || engine.Connected)))
             { answer.TrySetResult(false); return; }
-            confirmation = request; message = "Confirm matching codes on BOTH PCs. The request expires after 75 seconds.";
-            ShowWindow(window, 9); SetForegroundWindow(window); Refresh();
+            confirmation = request;
+            message = prompt.Incoming ? "Verify this code on the initiating PC. Nothing to click here."
+                : "Compare both screens, then confirm here. Nothing to click on the other PC.";
+            if (prompt.Incoming) answer.TrySetResult(true);
+            else { ShowWindow(window, 9); SetForegroundWindow(window); }
+            Refresh();
         });
         try { return await answer.Task.ConfigureAwait(false); }
         finally
         {
             PostToUi(() =>
             {
-                if (ReferenceEquals(confirmation, request))
+                if (!prompt.Incoming && ReferenceEquals(confirmation, request))
                 {
                     confirmation = null;
                     message = ct.IsCancellationRequested ? "Pairing ended or timed out. No new pairing was saved here." : "Waiting for the other PC to finish pairing…";
@@ -204,9 +217,11 @@ internal sealed partial class MainWindow
     }
     private async void ReceivePaired(PairedPeer peer)
     {
+        confirmation = null;
         uiBusy = true;
         try
         {
+            if (!settings.AutoConnect) throw new OperationCanceledException("Sharing was paused before pairing completed.");
             await engine.StopAsync("Preparing to receive…");
             SwitchRole(false);
             settings.PeerName = peer.Name; settings.Host = peer.Address; settings.PairingCode = peer.Invitation.Encode();
@@ -238,14 +253,21 @@ internal sealed partial class MainWindow
         Manual => confirmation is null,
         NextPeer => !manualSetup && controller && confirmation is null && nearby.Length > 1,
         Start => confirmation is null,
-        ApprovePair or RejectPair => confirmation is not null,
+        ApprovePair or RejectPair => confirmation is { Prompt.Incoming: false },
         _ => true
     };
     private void UpdateSetupControls()
     {
         if (!controls.ContainsKey(Manual)) return;
         foreach (int id in new[] { Address, Code, Reveal, Copy, ResetPair, Manual, NextPeer, Start, ApprovePair, RejectPair })
-            ShowWindow(controls[id], SetupControlVisible(id) ? 5 : 0);
+        {
+            bool visible = SetupControlVisible(id);
+            if (!controlVisibility.TryGetValue(id, out bool previous) || previous != visible)
+            {
+                controlVisibility[id] = visible;
+                ShowWindow(controls[id], visible ? 5 : 0);
+            }
+        }
         Caption(Manual, manualSetup ? "Nearby PCs" : "Manual setup");
     }
     private void DrawSetup(nint dc)
@@ -253,9 +275,10 @@ internal sealed partial class MainWindow
         Box(dc, 36, 398, 828, 236, Surface, 18);
         if (confirmation is { } request)
         {
-            TextAt(dc, request.Prompt.Incoming ? "Allow this PC to receive control?" : "Confirm your receiving PC", 58, 414, 770, 30, 19, Ink, 600);
+            TextAt(dc, request.Prompt.Incoming ? "Pairing from your other PC" : "Confirm your receiving PC", 58, 414, 770, 30, 19, Ink, 600);
             TextAt(dc, request.Prompt.Code, 58, 458, 770, 41, 29, Accent, 600);
             TextAt(dc, $"Compare this code on both screens. Only pair if it matches.\n{request.Prompt.PeerName}  ·  {request.Prompt.Address}", 58, 512, 770, 49, 13, Muted, 400, 0x10);
+            if (request.Prompt.Incoming) TextAt(dc, "Confirm on the initiating PC · this PC connects automatically", 58, 585, 770, 24, 13, Accent);
             return;
         }
         TextAt(dc, manualSetup ? "Manual connection" : controller ? "Nearby PCs" : "Ready for your other PC", 58, 414, 640, 29, 18, Ink, 600);
@@ -271,7 +294,7 @@ internal sealed partial class MainWindow
         {
             TextAt(dc, Environment.MachineName, 58, 460, 770, 34, 21, Ink, 600);
             TextAt(dc, "Choose this PC from the nearby list on your controlling PC.", 58, 502, 770, 25, 13, Accent);
-            TextAt(dc, "Confirm the matching code here once. Future connections are automatic.", 58, 534, 770, 25, 13, Muted);
+            TextAt(dc, "No approval needed here. Verify the code on the initiating PC.", 58, 534, 770, 25, 13, Muted);
         }
         TextAt(dc, engine.Connected ? "Encrypted connection ready" : settings.AutoConnect ? "Remembers your pairing and role" : "Automatic connection paused", 296, 585, 540, 24, 13, engine.Connected ? Accent : Muted);
     }

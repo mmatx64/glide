@@ -44,19 +44,19 @@ internal static class Native
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern ushort RegisterClassEx(ref WindowClass value);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern nint CreateWindowEx(uint ex, string className, string title, uint style, int x, int y, int width, int height, nint parent, nint menu, nint instance, nint param);
-    [DllImport("user32.dll")] internal static extern nint DefWindowProc(nint w, uint m, nuint p, nint l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint DefWindowProc(nint w, uint m, nuint p, nint l);
     [DllImport("user32.dll")] internal static extern bool DestroyWindow(nint w);
     [DllImport("user32.dll")] internal static extern bool ShowWindow(nint w, int command);
     [DllImport("user32.dll")] internal static extern bool UpdateWindow(nint w);
     [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(nint w);
-    [DllImport("user32.dll")] internal static extern bool GetMessage(out Message message, nint w, uint min, uint max);
-    [DllImport("user32.dll")] internal static extern bool PeekMessage(out Message message, nint w, uint min, uint max, uint remove);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool GetMessage(out Message message, nint w, uint min, uint max);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool PeekMessage(out Message message, nint w, uint min, uint max, uint remove);
     [DllImport("user32.dll")] internal static extern bool TranslateMessage(ref Message message);
-    [DllImport("user32.dll")] internal static extern nint DispatchMessage(ref Message message);
-    [DllImport("user32.dll")] internal static extern bool IsDialogMessage(nint w, ref Message message);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint DispatchMessage(ref Message message);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool IsDialogMessage(nint w, ref Message message);
     [DllImport("user32.dll")] internal static extern void PostQuitMessage(int code);
-    [DllImport("user32.dll")] internal static extern bool PostMessage(nint w, uint m, nuint p, nint l);
-    [DllImport("user32.dll")] internal static extern bool PostThreadMessage(uint thread, uint m, nuint p, nint l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool PostMessage(nint w, uint m, nuint p, nint l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool PostThreadMessage(uint thread, uint m, nuint p, nint l);
     [DllImport("kernel32.dll")] internal static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] internal static extern nint GetModuleHandle(string? name);
     [DllImport("user32.dll")] internal static extern nint SetWindowsHookEx(int id, HookProc proc, nint module, uint thread);
@@ -82,7 +82,9 @@ internal static class Native
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool SetWindowText(nint w, string text);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern int GetWindowText(nint w, System.Text.StringBuilder text, int count);
     [DllImport("user32.dll")] internal static extern bool EnableWindow(nint w, bool enable);
-    [DllImport("user32.dll")] internal static extern nint SendMessage(nint w, uint m, nuint p, nint l);
+    [DllImport("user32.dll")] internal static extern bool IsWindowVisible(nint w);
+    [DllImport("user32.dll")] internal static extern bool IsWindowEnabled(nint w);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint SendMessage(nint w, uint m, nuint p, nint l);
     [DllImport("user32.dll")] internal static extern bool MoveWindow(nint w, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] internal static extern bool GetClientRect(nint w, out Rect rect);
     [DllImport("user32.dll")] internal static extern bool GetWindowRect(nint w, out Rect rect);
@@ -119,6 +121,8 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern nint GetDC(nint w);
     [DllImport("user32.dll")] internal static extern int ReleaseDC(nint w, nint dc);
     [DllImport("gdi32.dll")] internal static extern nint CreateCompatibleDC(nint dc);
+    [DllImport("gdi32.dll")] internal static extern nint CreateCompatibleBitmap(nint dc, int width, int height);
+    [DllImport("gdi32.dll")] internal static extern bool BitBlt(nint destination, int x, int y, int width, int height, nint source, int sourceX, int sourceY, uint operation);
     [DllImport("gdi32.dll")] internal static extern bool DeleteDC(nint dc);
     [DllImport("gdi32.dll")] internal static extern nint CreateDIBSection(nint dc, ref BitmapInfo info, uint usage, out nint bits, nint section, uint offset);
 

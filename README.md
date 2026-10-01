@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, confirmed pairing without copying IPs or secrets, and encrypted direct connections. Version 0.2 remains a preview pending testing on two physical PCs.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version 0.3 is a preview; the latest pairing changes still need two-PC testing.
 
-**[Download Glide for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.2.0/Glide-0.2.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.2.0)
+**[Download Glide for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.3.0/Glide-0.3.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.3.0)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -10,7 +10,7 @@ Download the portable ZIP from the release, extract it on both PCs, and follow t
 
 1. Extract the ZIP into a writable folder on each PC. Run **Glide.exe**. Windows 10/11 x64; no installer, .NET runtime, administrator rights, cloud account, or service required for ordinary use.
 2. Open Glide on **both PCs** and allow access on private networks if Windows asks. The other PC should appear under **Nearby PCs** within a few seconds. If more than one appears, use **Next PC**.
-3. On the PC with your physical mouse and keyboard, select **This PC controls**, select the nearby laptop, and click **Pair & connect**. Compare the short code on both screens and click **Codes match · Pair** on **both PCs**. Never approve different codes. The other PC automatically becomes the receiver; no IP or long pairing code needs to be copied.
+3. On the PC with your physical mouse and keyboard, select **This PC controls**, select the nearby laptop, and click **Pair & connect**. Compare the short code on both screens and click **Codes match · Pair** **only on this initiating PC**. Never approve different codes. Nothing needs to be clicked on the other PC: it displays the code, becomes the receiver, and connects automatically. Either PC can initiate as the controller.
 4. Wait for **Connected**, then move through the adjoining outer screen edge. Move back across the same boundary to return. Release held keys/buttons before leaving the controlling PC.
 5. Use **Swap sides** to place the other PC left or right (pause first if already sharing). Glide remembers the pairing, role, and layout, then reconnects when both apps are opened again. A paired PC's changed IP is detected without replacing its trusted identity.
 6. **Ctrl + Alt + F12** on either PC stops sharing and restores local control. **Pause sharing** also stops it. The pause persists across launches. Start again or explicitly choose a role to resume. Closing the window hides it to the tray; double-click or right-click its tray icon to reopen. **Quit** exits.
@@ -19,7 +19,11 @@ Turn off Mouse Without Borders while trying Glide so both apps do not intercept 
 
 ### If the other PC does not appear
 
-Both PCs need version 0.2 for discovery. Check that they are on the same private LAN and not isolated by guest Wi-Fi. UDP broadcasts do not generally cross subnets or VPNs. **Manual setup** retains the original IP/code setup for those cases and for version 0.1 peers. The firewall helper below now handles discovery and pairing on both PCs.
+Both PCs need version 0.3 for discovery and one-sided pairing. Check that they are on the same private LAN and not isolated by guest Wi-Fi. UDP broadcasts do not generally cross subnets or VPNs. **Manual setup** retains the original IP/code setup for those cases and older peers. The firewall helper below handles discovery and pairing on both PCs.
+
+### Smart App Control
+
+This preview executable is **unsigned**. Windows Smart App Control can block an unknown unsigned app; changing the filename, icon, or ZIP does not solve that. A release signed with a certificate from a trusted code-signing provider (or Microsoft Artifact Signing) is needed to address signing-based blocks. There is no signing account/certificate configured for this project yet, and this release does not claim to fix the warning. Smart App Control has no per-app allow exception. See [Microsoft's signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control) and [Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions).
 
 ### Firewall
 
@@ -41,7 +45,9 @@ To upgrade in place, quit Glide, replace **Glide.exe**, and keep your own **Glid
 
 Windows manages DPAPI master keys and temporary TLS private-key material itself; these are OS facilities, not additional Glide settings. The TLS key is not installed into a certificate store and is released when the identity is disposed.
 
-Nearby discovery sends only a sanitized PC name, public certificate fingerprint, role, and connection status. The IP comes from the received packet; discovery is not proof of identity. First pairing pins the advertised TLS certificate and compares a fresh session code on both screens before exchanging credentials. A committed client nonce, random server nonce, and certificate fingerprint bind the comparison code. Rejecting, canceling, or timing out either prompt aborts the exchange. Paired reconnects verify the saved certificate before sending the secret, including after an IP change.
+Nearby discovery sends only a sanitized PC name, public certificate fingerprint, role, and connection status. The IP comes from the received packet; discovery is not proof of identity. First pairing pins the advertised TLS certificate and displays a fresh session code on both screens before exchanging credentials. A committed client nonce, random server nonce, and certificate fingerprint bind the comparison code. Only the initiator confirms; rejection or timeout aborts the exchange. Both endpoints prove possession of their TLS private keys, and the exchanged identity must match that proof. Paired reconnects verify the saved certificate before sending the secret, including after an IP change.
+
+An unpaired PC accepts incoming first pairing automatically while its Glide window is open and sharing is not paused. Use this convenience on a trusted LAN: another local user can initiate first pairing without a receiving-side approval. Once paired, incoming easy-pairing requests must prove the remembered PC's identity; an unrelated PC cannot replace it by copying its name or discovery announcement. Pause/emergency stop blocks incoming easy pairing too. A remembered PC can reconnect while the window is hidden. Reset the saved pairing before switching to a different workstation.
 
 Manual pairing codes remain private credentials: anyone with the code and network access can control a listening receiver. They persist until rotated and are not one-time invitations. Input never travels in cleartext. Glide does not log keystrokes, install a background service, or enable startup entries.
 
@@ -50,6 +56,7 @@ Manual pairing codes remain private credentials: anyone with the code and networ
 - TLS authentication and desktop negotiation complete **before** edge crossing.
 - `TCP_NODELAY`, small socket buffers, and a 400 ms heartbeat avoid reconnecting at the edge and expose real round-trip latency in the window.
 - A dedicated message-loop thread handles Windows hooks. It queues input; it never waits for a network write.
+- UI polling repaints only when displayed state changes. Buffered window painting and unchanged-control checks avoid the previous half-second refresh flicker.
 - Adjacent queued absolute mouse positions collapse into the latest position. Key/button transitions remain ordered barriers, so a click cannot overtake its position.
 - A bounded queue fails the session rather than dropping a key-up or button-up. A silent-peer watchdog disconnects after approximately 1.6–2 seconds and releases tracked remote input.
 - The client reconnects in the background after ordinary connection failures. Pause and emergency stop disable reconnecting until you press Start again.
@@ -83,11 +90,11 @@ dotnet run --project tests/Glide.Tests -c Release
 .\dist\Glide\Glide.exe --profile C:\temp\glide-idle.txt
 ```
 
-Self-test writes results under `self-test` beside the executable and checks Win32 structures, INI/DPAPI round-tripping, NativeAOT TLS echo, discovery, mutual pairing, awaited role transitions, hook startup/emergency handling/teardown. It does not inject remote keystrokes. Preview renders native controls without networking or saving settings; `--preview-nearby` and `--preview-confirm` add example states. Profile measures six seconds of standby with networking disabled and exits. Neither mode is a two-PC benchmark.
+Self-test writes results under `self-test` beside the executable and checks Win32 structures, Unicode titles/text, INI/DPAPI round-tripping, NativeAOT TLS echo, discovery, one-sided verified pairing, awaited role transitions, hook startup/emergency handling/teardown. It does not inject remote keystrokes. Preview renders native controls without networking or saving settings; `--preview-nearby` and `--preview-confirm` add example states; add `--preview-outgoing` for the initiating confirmation screen. Profile measures six seconds of standby with networking disabled, reports repaint/refresh counts, and exits. Neither mode is a two-PC benchmark.
 
 ### Two-PC acceptance pass
 
-1. Open both apps, verify discovery and matching-code pairing, and reject a request once. Reopen both apps and verify automatic reconnect; pause and restart to verify it stays paused. Change a PC's IP and verify it reconnects with its saved identity. Reverse Control/Receive roles without copying credentials.
+1. Open both apps, verify discovery, initiate pairing on one PC and verify the code there only. Leave the receiving PC untouched and check that both connect. Reject a request once on the initiator. Reopen both apps and verify automatic reconnect; pause and restart to verify it stays paused. Change a PC's IP and verify it reconnects with its saved identity. Reverse Control/Receive roles without copying credentials.
 2. Make 50 crossings in both directions. Observe the first few movements after each crossing and the RTT readout, first on Ethernet and then on your usual network.
 3. Type mixed case and shortcuts in a disposable text document; test click, double-click, scroll, and dragging within the receiving PC.
 4. Hold a key on the remote PC, disconnect its network, and verify local control returns and the receiver releases held input. Test Ctrl+Alt+F12 on both PCs.

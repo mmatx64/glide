@@ -32,6 +32,7 @@ internal sealed partial class MainWindow : IDisposable
     private readonly Engine engine = new();
     private readonly Dictionary<int, nint> controls = new();
     private readonly Dictionary<int, string> captions = new();
+    private readonly Dictionary<int, bool> controlVisibility = new();
     private readonly Dictionary<(int, int), nint> fonts = new();
     private readonly string[] args;
     private readonly nint fieldBrush = CreateSolidBrush(Rgb((int)Field));
@@ -52,6 +53,9 @@ internal sealed partial class MainWindow : IDisposable
     private TimeSpan initialCpu;
     private readonly Stopwatch profileWatch = new();
     private nint icon;
+    private string lastVisualState = "";
+    private int paintCount;
+    private int refreshCount, visualInvalidationCount;
 
     internal MainWindow(string[] args)
     {
@@ -99,7 +103,7 @@ internal sealed partial class MainWindow : IDisposable
             nearby = [selectedPeer];
         }
         if (previewPath is not null && args.Contains("--preview-confirm"))
-            confirmation = new Confirmation(new PairingPrompt("YOUR-LAPTOP", "192.168.1.24", "A1B2 C3D4 E5F6", true), new TaskCompletionSource<bool>());
+            confirmation = new Confirmation(new PairingPrompt("YOUR-LAPTOP", "192.168.1.24", "A1B2 C3D4 E5F6", !args.Contains("--preview-outgoing")), new TaskCompletionSource<bool>());
         Refresh();
         if (previewPath is not null) SetTimer(window, 2, 700, 0);
         if (profilePath is not null)
@@ -162,6 +166,7 @@ internal sealed partial class MainWindow : IDisposable
         if (save) Remember();
         controller = useController;
         settings.Role = controller ? "Controller" : "Receiver";
+        InvalidateRect(controls[RoleControl], 0, false); InvalidateRect(controls[RoleReceive], 0, false);
         codeVisible = false;
         if (!controller)
         {
@@ -197,7 +202,15 @@ internal sealed partial class MainWindow : IDisposable
         settings.Role = controller ? "Controller" : "Receiver";
         if (previewPath is null) settings.Save();
     }
-    private void Caption(int id, string text) { captions[id] = text; SetWindowText(controls[id], text); InvalidateRect(controls[id], 0, false); }
+    private void Caption(int id, string text)
+    {
+        if (captions.GetValueOrDefault(id) == text) return;
+        captions[id] = text; SetWindowText(controls[id], text); InvalidateRect(controls[id], 0, false);
+    }
+    private void EnableControl(int id, bool enabled)
+    {
+        if (IsWindowEnabled(controls[id]) != enabled) EnableWindow(controls[id], enabled);
+    }
     private async void Click(int id)
     {
         try
@@ -217,7 +230,7 @@ internal sealed partial class MainWindow : IDisposable
                 await ResetIdentity(); break;
             case Manual: manualSetup = !manualSetup; UpdateSetupControls(); break;
             case NextPeer: SelectNextPeer(); break;
-            case ApprovePair: confirmation?.Answer.TrySetResult(true); message = "Confirmed here · waiting for the other PC…"; break;
+            case ApprovePair: confirmation?.Answer.TrySetResult(true); message = "Verified · connecting both PCs…"; break;
             case RejectPair: confirmation?.Answer.TrySetResult(false); break;
             case Start:
                 if (previewPath is not null) return;
@@ -232,21 +245,30 @@ internal sealed partial class MainWindow : IDisposable
     private void HideWindow()
     {
         if (!trayAdded) { message = "Tray unavailable. Use Minimize to keep Glide running."; InvalidateRect(window, 0, false); return; }
-        Remember(); ShowWindow(window, 0);
+        Remember(); ShowWindow(window, 0); UpdatePairingPolicy();
     }
     private void Refresh()
     {
+        refreshCount++;
         DiscoverPeers();
+        UpdatePairingPolicy();
         TryAutoConnect();
         bool running = engine.Running;
         bool busy = uiBusy || confirmation is not null || pairingServer?.IsPairing == true;
-        foreach (int id in new[] { RoleControl, RoleReceive }) EnableWindow(controls[id], !busy);
-        foreach (int id in new[] { Address, Code, ResetPair, NextPeer, Manual }) EnableWindow(controls[id], !busy && !running);
-        EnableWindow(controls[Side], !running && controller);
-        EnableWindow(controls[Start], !busy);
+        foreach (int id in new[] { RoleControl, RoleReceive }) EnableControl(id, !busy);
+        foreach (int id in new[] { Address, Code, ResetPair, NextPeer, Manual }) EnableControl(id, !busy && !running);
+        EnableControl(Side, !running && controller);
+        EnableControl(Start, !busy);
         Caption(Start, running ? "Pause sharing" : uiBusy ? "Pairing…" : controller && !manualSetup && selectedPeer is not null && !IsTrusted(selectedPeer) ? "Pair & connect" : controller ? "Start sharing" : "Start receiving");
         UpdateSetupControls();
-        InvalidateRect(window, 0, false);
+        // Network timers still run, but an unchanged screen does not need repainting.
+        string visualState = $"{controller}|{running}|{engine.Connected}|{engine.ControllingRemote}|{engine.Status}|{engine.Latency:0.0}|{message}|{discoveryError}|{manualSetup}|{settings.RemoteOnRight}|{settings.AutoConnect}|{settings.PeerName}|{selectedPeer?.Info}|{selectedPeer?.Address}|{confirmation?.Prompt}|{captions[Start]}";
+        if (lastVisualState != visualState)
+        {
+            visualInvalidationCount++;
+            lastVisualState = visualState;
+            InvalidateRect(window, 0, false);
+        }
     }
     private nint Procedure(nint w, uint m, nuint p, nint l)
     {
@@ -268,7 +290,8 @@ internal sealed partial class MainWindow : IDisposable
                     else if (p == 3 && profilePath is not null)
                     {
                         KillTimer(w, 3); using var process = Process.GetCurrentProcess(); process.Refresh();
-                        File.WriteAllText(profilePath, $"Standby profile; sharing off; native Release build\nElapsedSeconds={profileWatch.Elapsed.TotalSeconds:F3}\nCpuPercentOfOneCore={(process.TotalProcessorTime - initialCpu).TotalMilliseconds / profileWatch.Elapsed.TotalMilliseconds * 100:F3}\nWorkingSetBytes={process.WorkingSet64}\nPrivateBytes={process.PrivateMemorySize64}\n");
+                        var title = new StringBuilder(64); GetWindowText(w, title, title.Capacity);
+                        File.WriteAllText(profilePath, $"Standby profile; sharing off; native Release build\nElapsedSeconds={profileWatch.Elapsed.TotalSeconds:F3}\nCpuPercentOfOneCore={(process.TotalProcessorTime - initialCpu).TotalMilliseconds / profileWatch.Elapsed.TotalMilliseconds * 100:F3}\nWorkingSetBytes={process.WorkingSet64}\nPrivateBytes={process.PrivateMemorySize64}\nPaintCount={paintCount}\nRefreshCount={refreshCount}\nVisualInvalidations={visualInvalidationCount}\nWindowTitle={title}\n");
                         DestroyWindow(w);
                     }
                     else Refresh();
@@ -304,8 +327,25 @@ internal sealed partial class MainWindow : IDisposable
     private void PaintWindow(nint w)
     {
         var dc = BeginPaint(w, out var paint);
-        try { DrawContent(w, dc); }
-        finally { EndPaint(w, ref paint); }
+        nint memory = 0, bitmap = 0, previous = 0;
+        try
+        {
+            GetClientRect(w, out var bounds);
+            memory = CreateCompatibleDC(dc);
+            bitmap = CreateCompatibleBitmap(dc, bounds.Width, bounds.Height);
+            if (memory == 0 || bitmap == 0) { DrawContent(w, dc); return; }
+            previous = SelectObject(memory, bitmap);
+            DrawContent(w, memory);
+            BitBlt(dc, 0, 0, bounds.Width, bounds.Height, memory, 0, 0, 0x00cc0020);
+            paintCount++;
+        }
+        finally
+        {
+            if (previous != 0) SelectObject(memory, previous);
+            if (bitmap != 0) DeleteObject(bitmap);
+            if (memory != 0) DeleteDC(memory);
+            EndPaint(w, ref paint);
+        }
     }
     private void DrawContent(nint w, nint dc)
     {
@@ -314,7 +354,7 @@ internal sealed partial class MainWindow : IDisposable
             TextAt(dc, "glide", 82, 29, 140, 38, 28, Ink, 650);
             TextAt(dc, "TWO PCs. ONE FLOW.", 36, 87, 500, 23, 11, Accent, 650);
             TextAt(dc, "Your desk. One cursor.", 34, 111, 680, 44, 32, Ink, 600);
-            TextAt(dc, "PORTABLE  /  v0.2", 708, 38, 160, 26, 11, Muted, 500, 2 | 0x20);
+            TextAt(dc, "PORTABLE  /  v0.3", 708, 38, 160, 26, 11, Muted, 500, 2 | 0x20);
             bool connected = engine.Connected;
             Box(dc, 728, 111, 136, 30, connected ? 0x1d3c36u : Surface, 20);
             TextAt(dc, connected ? "●  Connected" : engine.Running ? "●  Connecting" : "○  Standby", 740, 116, 118, 22, 12, connected ? Accent : Muted, 500);

@@ -1,5 +1,21 @@
 # Glide validation — October 1, 2026
 
+## v0.3.0: one-sided pairing and UI refresh fixes
+
+Native executable: **4,470,784 bytes**; SHA-256 `F8F82E3728E61264CE0BEDDFCC8B4044347DB5AAF3409EB2B58AC535F42293D3`.
+
+Portable ZIP: **2,082,327 bytes**; SHA-256 `0612381FEB4318378310911A65F410D7BE70580A0F4363BFBE1CFFFA381748F6`.
+
+- Full Release NativeAOT build and **38 core checks passed**. New coverage verifies passive receiving-side confirmation, withholding credentials until the initiator verifies, rejecting a same-name stranger's certificate, initiator rejection, and revoking permission while verification is pending. Existing protocol, discovery, pinning, cancellation and altered-nonce checks pass.
+- Native smoke tests passed, including mutual TLS client identity proof, one-sided verified pairing, Unicode window-title/control text, settings/DPAPI, input transport, listener restarts, and hook lifecycle. No remote keystrokes were injected.
+- Both incoming and outgoing pairing previews were rendered and visually inspected. Incoming has no approval buttons; outgoing has Verify/Reject controls. These previews use sample peer data.
+- The actual application window title read back as **Glide**, fixing the ANSI/Unicode mismatch that displayed only **G**.
+- Six-second standby sample: **12 refresh calls, 1 initial state invalidation**, rather than an invalidation on every timer tick; 17,362,944-byte working set and 5,283,840 private bytes. CPU measured 0.000% of one core at Windows process-time resolution. The helper window was hidden and performed no paints, so this is an idle invalidation/resource check, not a visible-frame flicker benchmark. Changed-state painting now uses a temporary off-screen bitmap and one copy to the window.
+- Final same-PC encrypted transport RTT: median **0.031 ms**, p95 **0.080 ms**, p99 **0.231 ms**. This does not measure two-PC input latency.
+- ZIP entries verified against the intended executable, pristine INI, README and optional firewall helper. The packaged INI matches the source template exactly. Authenticode status remains **NotSigned**; no signing certificate/account is configured and Smart App Control blocking is not resolved by this update.
+
+Update both PCs for v0.3 discovery/easy pairing; preserve their own INI files. First pairing automatically accepts a request on an open, unpaired, unpaused receiving app; use a trusted LAN. Remembered pairings require the saved peer's private-key proof. Latest one-sided workflow and visible connected-session repaint behavior still need verification on two physical PCs.
+
 ## v0.2.0: discovery and confirmed pairing
 
 Native executable: **4,453,888 bytes**; SHA-256 `61D6E9432D7BB66D829FA06BA100669747767AB62AA48A116490176F0DA07F5B`.
