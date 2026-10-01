@@ -15,6 +15,13 @@ internal static class NativeTests
             if (Marshal.SizeOf<Native.Input>() != 40) throw new Exception("x64 INPUT layout is wrong.");
             if (Marshal.SizeOf<Native.MouseHook>() != 32 || Marshal.SizeOf<Native.KeyHook>() != 24) throw new Exception("Hook layout is wrong.");
             lines.Add("PASS Win32 x64 input structures");
+            UpdateInstaller.TestPaths(directory);
+            lines.Add("PASS update directory guard blocks rename while allowing atomic replacement and preserving settings");
+            if (!Environment.ProcessPath!.EndsWith("dotnet.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                UpdateInstaller.TestJobLifetime(directory);
+                lines.Add("PASS detached updater survives service job closure while the attached parent is terminated");
+            }
             ServiceTests();
             lines.Add("PASS service ABI, token/logon queries, bounded event names, event lifecycle, and untrusted install-path rejection");
             KeypadTest();

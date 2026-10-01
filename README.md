@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.5.1** fixes sharing-stop races, bounds incoming connections, and improves shutdown and service-validation cleanup. The optional service starts Glide elevated at sign-in for credential dialogs and administrator applications on the normal desktop. This is preview software; service mode still needs two-PC testing.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.6.0** adds user-initiated GitHub updates with verified downloads, administrator app/service replacement, settings preservation, and rollback. The optional service starts Glide elevated at sign-in for credential dialogs and administrator applications on the normal desktop. This is preview software; service mode still needs two-PC testing.
 
-**[Download Glide v0.5.1 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.5.1/Glide-0.5.1-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.5.1)
+**[Download Glide v0.6.0 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.6.0/Glide-0.6.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.6.0)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -19,11 +19,21 @@ The ZIP supports ordinary portable use and the optional service installation bel
 
 Turn off Mouse Without Borders while trying Glide so both apps do not intercept the same input. Start with an ordinary application on the receiver. To reverse roles after pairing, select **This PC receives** on the old controller and **This PC controls** on the other PC. Pairing exchanges credentials both ways, so no new code is needed. Portable mode does not add Windows startup entries; automatic reconnection happens when you open it.
 
+## Click-to-update
+
+Click **Check for updates** at the bottom of the window. Glide checks the latest public, stable Windows x64 release in `mmatx64/glide`; it does not poll in the background or require a GitHub account. If a newer version exists, Glide shows the affected paths and asks whether to install. Approve the administrator prompt as the Windows account using Glide; service mode already runs elevated and needs no second prompt.
+
+The separate updater downloads into an administrator-protected staging folder, verifies GitHub's published SHA-256 digest and the expected ZIP contents, then asks Glide to release input and exit. It updates the portable folder you launched from (including `C:\Programs\Glide`) and any installed service copy in `%ProgramFiles%\Glide`. The desktop app and helper service currently share `Glide.exe`, so both are replaced together. Service mode retains its existing protected path; no installation is relocated.
+
+Each PC's `Glide.ini`, pairing, enrolled service account, and Pause state are retained. A running service is stopped and restarted; a stopped service stays stopped. The service UI reopens when its service was running; otherwise the portable app reopens through the desktop shell. Installation/startup failures trigger file rollback and restoration of the previous service state. If recovery itself fails, the error dialog identifies the problem and remaining `.bak` files are retained beside the installation.
+
+The updater only handles public releases outside GitHub's prerelease channel, with a matching `Glide-VERSION-win-x64.zip` asset and SHA-256 digest. Private releases and prereleases are unsupported. v0.6.0 uses the regular release channel so GitHub's latest-release endpoint can find it; this does not remove the preview limitations below. Install v0.6.0 manually once to gain the updater, then use the button for later releases. Update each PC separately.
+
 ## Optional service mode
 
 Service mode automatically starts Glide elevated at sign-in, so normal-desktop Windows credential dialogs and administrator applications can receive shared input without relaunching Glide as administrator. Install it on the receiving PC, or on both PCs if you reverse roles. It supports **one enrolled Windows administrator account and the active physical console session** per PC. It does not control lock screens, UAC secure desktops, Ctrl+Alt+Delete, other users' sessions, or RDP sessions.
 
-1. Quit the portable Glide instance. Extract the v0.5.1 package into a writable folder.
+1. Quit the portable Glide instance. Extract the v0.6.0 package into a writable folder.
 2. From PowerShell in that folder, run `.\Install-Service.ps1`. Approve the one-time Windows administrator prompt **as the same Windows account that will use Glide**. To retain a portable pairing, instead run `.\Install-Service.ps1 -SettingsPath 'C:\path\to\existing\Glide.ini'`. A first installation otherwise imports the blank INI beside the installer. Updates preserve the installed settings.
 3. Open **Glide (service)** from the Start menu, or use its tray icon. No administrator prompt is needed for normal reopening. The title says **SERVICE**. A paired app starts hidden at sign-in; a fresh installation opens for setup. For a fresh pairing, initiate **Pair & connect from the service PC** and confirm the code there, then reverse roles if needed. An unpaired service session does not accept unattended incoming first-pair requests. If installing service mode on both unpaired PCs, pair them in portable mode first, then import each PC's own INI during installation.
 
@@ -90,7 +100,8 @@ These changes target plausible causes of handoff lag. They cannot eliminate Wi-F
 - Handoff begins only when no key/button is held. Dragging windows/files across PCs is unsupported. The controlling PC's pointer is parked on its main display while remotely controlling the other PC.
 - Portable mode cannot control higher-privilege applications unless launched elevated. Service mode supports those windows on the normal desktop. Windows secure desktops, UAC elevation prompts, lock screens, and Ctrl+Alt+Delete still require local control. If Windows blocks injection, Glide disconnects.
 - Use on trusted local networks. Discovery broadcasts every two seconds and removes absent peers after seven seconds; it is bounded to 32 peers. There is no WAN relay. Networking is IPv4. Complex multi-adapter, VPN, and guest-network discovery still needs physical validation.
-- Unsigned development executable; there is no code-signing certificate or automatic updater.
+- Unsigned development executable; there is no code-signing certificate. Updates in v0.6.0 are explicitly initiated by the user.
+- Fast/accelerated remote wheel scrolling has a reported delay; slow scrolling appears normal. Tracked as [BUG-001](https://github.com/mmatx64/glide/blob/main/ISSUES.md); buffering is not yet a confirmed cause.
 
 ## Build and verify
 

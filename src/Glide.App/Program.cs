@@ -13,6 +13,8 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--apply-update") return UpdateInstaller.Run(args);
+        if (args.Length > 0 && args[0] is "--update-job-probe" or "--update-lifetime-probe") return UpdateInstaller.RunJobProbe(args);
         if (args.SequenceEqual(new[] { "--service" })) return ServiceHost.Run();
         if (args.SequenceEqual(new[] { "--service-test" })) return ServiceHost.Run(true);
         if (args.SequenceEqual(new[] { "--open-service" }) || (args.Length == 0 &&
@@ -65,7 +67,7 @@ internal sealed partial class MainWindow : IDisposable
     private uint taskbarCreated;
     private const int RoleControl = 101, RoleReceive = 102, Address = 103, Code = 104,
         Start = 105, Side = 106, Copy = 107, Hide = 108, Quit = 109, Reveal = 110, ResetPair = 111,
-        Manual = 112, NextPeer = 113, ApprovePair = 114, RejectPair = 115;
+        Manual = 112, NextPeer = 113, ApprovePair = 114, RejectPair = 115, Update = 116;
     private string? previewPath;
     private string? profilePath;
     private bool Diagnostic => previewPath is not null || profilePath is not null;
@@ -96,7 +98,7 @@ internal sealed partial class MainWindow : IDisposable
         var wc = new WindowClass { Size = (uint)Marshal.SizeOf<WindowClass>(), Proc = proc,
             Instance = GetModuleHandle(null), Cursor = LoadCursor(0, 32512), Icon = icon, Name = "Glide.Main" };
         if (RegisterClassEx(ref wc) == 0) throw new InvalidOperationException("Could not register the app window.");
-        window = CreateWindowEx(0, wc.Name, service is null ? "Glide  |  PORTABLE / v0.5.1" : "Glide  |  SERVICE / v0.5.1", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
+        window = CreateWindowEx(0, wc.Name, $"Glide  |  {(service is null ? "PORTABLE" : "SERVICE")} / v{UpdateInstaller.VersionText}", Style, unchecked((int)0x80000000), unchecked((int)0x80000000), ClientWidth, ClientHeight, 0, 0, wc.Instance, 0);
         if (window == 0) throw new InvalidOperationException("Could not create the app window.");
         SynchronizationContext.SetSynchronizationContext(new WindowContext(this));
         FitWindow(GetDpiForWindow(window) / 96.0);
@@ -108,6 +110,7 @@ internal sealed partial class MainWindow : IDisposable
         Button(Hide, "Hide to tray"); Button(Quit, "Quit"); Button(Reveal, "Show"); Button(ResetPair, "New code");
         Button(Manual, "Manual setup"); Button(NextPeer, "Next PC");
         Button(ApprovePair, "Codes match · Pair"); Button(RejectPair, "Reject");
+        Button(Update, "Check for updates");
         SwitchRole(controller, false);
         Layout();
         tray = new NotifyIcon { Size = (uint)Marshal.SizeOf<NotifyIcon>(), Window = window, Id = 1,
@@ -176,6 +179,7 @@ internal sealed partial class MainWindow : IDisposable
         Place(Reveal, 546, 450, 54, 33); Place(Copy, 342, 502, 124, 32);
         Place(Start, 672, 504, 288, 44); Place(ResetPair, 476, 502, 124, 32);
         Place(Hide, 772, 599, 130, 32); Place(Quit, 914, 599, 70, 32);
+        Place(Update, 604, 599, 156, 32);
         Place(Manual, 486, 392, 114, 32); Place(NextPeer, 490, 437, 110, 32);
         Place(ApprovePair, 672, 450, 288, 44); Place(RejectPair, 672, 506, 288, 38);
     }
@@ -253,6 +257,7 @@ internal sealed partial class MainWindow : IDisposable
             case Start:
                 if (Diagnostic) return;
                 await StartOrPause(); break;
+            case Update: await CheckForUpdate(); break;
             case Hide: HideWindow(); break;
             case Quit:
                 if (operations.IsStopped) settings.AutoConnect = false;
@@ -284,6 +289,7 @@ internal sealed partial class MainWindow : IDisposable
         foreach (int id in new[] { Address, Code, ResetPair, NextPeer, Manual }) EnableControl(id, !busy && !running);
         EnableControl(Side, !busy && !running && controller);
         EnableControl(Start, !busy);
+        EnableControl(Update, !busy && !updateBusy);
         Caption(Start, running ? "Pause sharing" : uiBusy ? "Pairing…" : controller && !manualSetup && selectedPeer is not null && !IsTrusted(selectedPeer) && !previewRemembered ? "Pair & connect" : controller ? "Start sharing" : "Start receiving");
         UpdateSetupControls();
         // Network timers still run, but an unchanged screen does not need repainting.
@@ -397,7 +403,7 @@ internal sealed partial class MainWindow : IDisposable
         bool textOnly = id is Manual or NextPeer;
         uint color = selected ? pressed ? 0x4abda0u : Accent : pressed ? 0x304154u : id is RoleControl or RoleReceive ? Field : Surface;
         if (disabled) color = Surface;
-        var backing = CreateSolidBrush(Rgb((int)(id is Side or Hide or Quit ? Background : Surface)));
+        var backing = CreateSolidBrush(Rgb((int)(id is Side or Hide or Quit or Update ? Background : Surface)));
         var bounds = item.Rect; FillRect(item.Dc, ref bounds, backing); DeleteObject(backing);
         if (!textOnly)
         {

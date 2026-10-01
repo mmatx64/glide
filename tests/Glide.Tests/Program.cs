@@ -7,6 +7,7 @@ using Glide.Core;
 using static TestSupport;
 
 if (args.Contains("--benchmark")) { await TransportBenchmark.Run(); return; }
+if (args.Length == 3 && args[0] == "--verify-release") { await ReleaseVerification.Run(args[1], Path.GetFullPath(args[2])); return; }
 
 int passed = 0;
 void Check(bool condition, string name) { if (!condition) throw new Exception(name); Console.WriteLine("PASS " + name); passed++; }
@@ -19,6 +20,7 @@ async Task Reject(Func<Task> action, string name)
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(35));
 var ct = deadline.Token;
 await OutboxBatchTests.Run(Check, ct);
+await UpdateTests.Run(Check, ct);
 var original = new Packet(MessageKind.Key, 0x41, 30, 3, 123456789012);
 var bytes = new byte[Packet.Size]; original.Write(bytes);
 Check(Packet.Read(bytes) == original, "binary protocol round-trip");

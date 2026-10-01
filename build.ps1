@@ -1,5 +1,5 @@
 param([switch]$SkipTests, [switch]$SkipLocalCopy)
-$releaseVersion = '0.5.1'
+$releaseVersion = '0.6.0'
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {

@@ -176,7 +176,9 @@ internal static class ServiceHost
                 stop = new ServiceEvent("Global\\Glide.Service.Stop." + Guid.NewGuid().ToString("N"), owner, false, true);
                 show = new ServiceEvent("Global\\Glide.Service.Show." + Guid.NewGuid().ToString("N"), owner, false);
                 job = CreateJobObject(0, null); Check(job != 0, "Create service session job");
-                var limits = new JobLimits { Basic = new JobBasic { Flags = 0x2000 } }; // KILL_ON_JOB_CLOSE
+                // KILL_ON_JOB_CLOSE still cleans ordinary descendants. Explicit
+                // BREAKAWAY_OK lets the elevated updater survive service stop.
+                var limits = new JobLimits { Basic = new JobBasic { Flags = 0x2800 } };
                 Check(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<JobLimits>()), "Configure session job");
                 var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Desktop = "winsta0\\default" };
                 var command = new StringBuilder("\"" + Executable + (diagnostic ? "\" --service-probe " : "\" --service-user ") + stop.Name + " " + show.Name);
