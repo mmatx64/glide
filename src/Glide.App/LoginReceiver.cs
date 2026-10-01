@@ -14,6 +14,8 @@ namespace Glide;
 // The fixed service child receives only existing TLS-authenticated input.
 internal static class LoginReceiver
 {
+    private static readonly uint sessionId = CurrentSession();
+    private static uint CurrentSession() { using var process = Process.GetCurrentProcess(); return (uint)process.SessionId; }
     internal static string DesktopName(nint desktop)
     {
         var name = new StringBuilder(128);
@@ -26,7 +28,7 @@ internal static class LoginReceiver
         try { return DesktopName(desktop); }
         finally { Native.CloseDesktop(desktop); }
     }
-    internal static bool OnConsole() => (uint)Process.GetCurrentProcess().SessionId == WTSGetActiveConsoleSessionId();
+    internal static bool OnConsole() => sessionId == WTSGetActiveConsoleSessionId();
     private static bool InputAllowed(string owner)
     {
         if (!OnConsole() || !InputDesktopName().Equals("Winlogon", StringComparison.OrdinalIgnoreCase)) return false;
