@@ -14,7 +14,7 @@ internal sealed class InputWorker : IDisposable
     private readonly (Connection Peer, Packet Packet)[] incomingBatch = new (Connection, Packet)[32];
     internal delegate uint InputSender(ReadOnlySpan<Input> inputs);
     private readonly InputSender sendInput;
-    private readonly Action wakeScreenSaver;
+    private readonly Func<bool> wakeScreenSaver;
     private readonly Func<bool> inputAllowed;
     private readonly Func<bool> releaseAllowed;
     private readonly HookProc mouseProc, keyProc;
@@ -33,6 +33,8 @@ internal sealed class InputWorker : IDisposable
     private long cooldown;
     private Exception? startupError;
     private int disposing;
+    private int pendingCount, pendingIndex;
+    private long wakeDeadline;
     internal bool IsRemote => remote;
     internal bool CapturingMouse => Volatile.Read(ref mouseHook) != 0;
     internal string ThreadDesktop { get; private set; } = "";
@@ -40,11 +42,12 @@ internal sealed class InputWorker : IDisposable
     private const nuint Tag = 0x474c4944;
     private const uint Work = WM_APP + 10, Incoming = WM_APP + 11;
 
-    internal InputWorker(InputSender? sendInput = null, Action? wakeScreenSaver = null, Func<bool>? inputAllowed = null, Func<bool>? releaseAllowed = null)
+    internal InputWorker(InputSender? sendInput = null, Action? wakeScreenSaver = null, Func<bool>? inputAllowed = null, Func<bool>? releaseAllowed = null, Func<bool>? wakePending = null)
     {
         this.sendInput = sendInput ?? SendNativeInput;
         // Mock injection must also avoid changing the user's real screensaver.
-        this.wakeScreenSaver = wakeScreenSaver ?? (sendInput is null ? new ScreenSaver().Wake : () => { });
+        this.wakeScreenSaver = wakePending ?? (wakeScreenSaver is null && sendInput is null
+            ? new ScreenSaver().Wake : () => { wakeScreenSaver?.Invoke(); return false; });
         this.inputAllowed = inputAllowed ?? (() => true);
         this.releaseAllowed = releaseAllowed ?? this.inputAllowed;
         mouseProc = Mouse; keyProc = Keyboard;
@@ -105,6 +108,7 @@ internal sealed class InputWorker : IDisposable
                         var current = Desktop;
                         if (current.Left != desktop.Left || current.Top != desktop.Top || current.Width != desktop.Width || current.Height != desktop.Height)
                         { connection?.Stop(); Reset(); desktop = current; Notice?.Invoke("Display layout changed. Reconnecting."); }
+                        if (pendingCount != 0) DrainIncoming();
                     }
                     else { TranslateMessage(ref message); DispatchMessage(ref message); }
                 }
@@ -116,6 +120,7 @@ internal sealed class InputWorker : IDisposable
         finally
         {
             Reset();
+            Array.Clear(incomingBatch);
             if (mouseHook != 0) UnhookWindowsHookEx(mouseHook);
             if (keyHook != 0) UnhookWindowsHookEx(keyHook);
             if (timer != 0) KillTimer(0, timer);
@@ -139,36 +144,51 @@ internal sealed class InputWorker : IDisposable
     }
     private void DrainIncoming()
     {
-        int count = inbound.TakeBatch(incomingBatch);
+        if (pendingCount == 0) { pendingCount = inbound.TakeBatch(incomingBatch); pendingIndex = 0; }
+        bool deferred = false;
         try
         {
             Span<Input> wheels = stackalloc Input[incomingBatch.Length];
-            for (int i = 0; i < count;)
+            while (pendingIndex < pendingCount)
             {
+                int i = pendingIndex;
                 var item = incomingBatch[i++];
-                if (!ReferenceEquals(item.Peer, connection) || !item.Peer.IsAlive) continue;
+                if (!ReferenceEquals(item.Peer, connection) || !item.Peer.IsAlive) { pendingIndex = i; continue; }
                 if (!controller && receiving && IsWheel(item.Packet))
                 {
                     int length = 0;
                     wheels[length++] = BuildMouseInput(item.Packet.A, item.Packet.B);
-                    while (i < count && ReferenceEquals(incomingBatch[i].Peer, item.Peer) && IsWheel(incomingBatch[i].Packet))
+                    while (i < pendingCount && ReferenceEquals(incomingBatch[i].Peer, item.Peer) && IsWheel(incomingBatch[i].Packet))
                     {
                         var packet = incomingBatch[i++].Packet;
                         wheels[length++] = BuildMouseInput(packet.A, packet.B);
                     }
                     // Separate INPUT records retain small deltas, reversals and
                     // wheel axes. Do not sum them or cross a key/button/move barrier.
-                    wakeScreenSaver();
+                    if (wakeScreenSaver()) { Defer(); deferred = true; return; }
                     Inject(wheels[..length], true);
                 }
-                else Apply(item.Packet);
+                else if (!Apply(item.Packet)) { Defer(); deferred = true; return; }
+                pendingIndex = i;
             }
         }
         finally
         {
-            Array.Clear(incomingBatch, 0, count);
+            if (!deferred) FinishBatch();
+        }
+        void Defer()
+        {
+            if (wakeDeadline == 0) wakeDeadline = Environment.TickCount64 + 3000;
+            if (Environment.TickCount64 >= wakeDeadline)
+                throw new InvalidOperationException("Screensaver did not dismiss. Use the receiving PC's local mouse.");
+        }
+        void FinishBatch()
+        {
+            Array.Clear(incomingBatch, 0, pendingCount);
+            pendingCount = pendingIndex = 0; wakeDeadline = 0;
             // Yield to Work/hotkey messages after at most 32 packets. No timer
-            // or wait to fill a batch, and at most one outstanding input wake.
+            // or wait to fill a batch. Only an actual saver transition defers
+            // this bounded batch; commands/emergency work keep running meanwhile.
             if (inbound.CompleteBatch() && !PostThreadMessage(threadId, Incoming, 0, 0)) connection?.Stop();
         }
     }
@@ -286,16 +306,16 @@ internal sealed class InputWorker : IDisposable
         heldKeys.Clear(); heldButtons.Clear();
         cooldown = Environment.TickCount64 + 700;
     }
-    private void Apply(Packet packet)
+    private bool Apply(Packet packet)
     {
-        if (connection is not { IsAlive: true }) return;
-        if (packet.Kind == MessageKind.Release) { if (controller && remote) ReturnLocal(); Reset(); return; }
+        if (connection is not { IsAlive: true }) return true;
+        if (packet.Kind == MessageKind.Release) { if (controller && remote) ReturnLocal(); Reset(); return true; }
         if (controller) throw new InvalidDataException("Peer sent unexpected input.");
         if (packet.Kind == MessageKind.Activate || (receiving && packet.Kind is MessageKind.Move or MessageKind.Key or MessageKind.Button))
-            wakeScreenSaver();
+            if (wakeScreenSaver()) return false;
         if (packet.Kind == MessageKind.Activate)
-        { Reset(); receiving = true; Move(packet.A, packet.B); return; }
-        if (!receiving) return;
+        { Reset(); receiving = true; Move(packet.A, packet.B); return true; }
+        if (!receiving) return true;
         switch (packet.Kind)
         {
             case MessageKind.Move: Move(packet.A, packet.B); break;
@@ -318,6 +338,7 @@ internal sealed class InputWorker : IDisposable
                 break;
             default: throw new InvalidDataException("Unexpected input message.");
         }
+        return true;
     }
     private void Move(int x, int y)
     {

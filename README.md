@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.7.0** adds opt-in service control at Windows sign-in after reboot/sign-out and while unlocking. It retains the built-in screensaver wake and scrolling fixes. User-initiated GitHub updates include verified downloads, administrator app/service replacement, settings preservation, and rollback. This is preview software; actual two-PC sign-in/unlock acceptance remains outstanding.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.7.1** adds a separate-desktop wake path for real idle-started screensavers and retains input until the normal desktop returns. It includes v0.7.0's opt-in Windows sign-in/unlock receiver and verified GitHub updates with settings preservation and rollback. This is preview software; the reported receiver's actual idle-saver case and two-PC sign-in/unlock still need acceptance.
 
-**[Download Glide v0.7.0 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.7.0/Glide-0.7.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.7.0)
+**[Download Glide v0.7.1 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.7.1/Glide-0.7.1-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.7.1)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -33,7 +33,7 @@ The updater only handles public releases outside GitHub's prerelease channel, wi
 
 Service mode automatically starts Glide elevated at sign-in, so normal-desktop Windows credential dialogs and administrator applications can receive shared input without relaunching Glide as administrator. Install it on the receiving PC, or on both PCs if you reverse roles. It supports **one enrolled Windows administrator account and the active physical console session** per PC. Windows sign-in/unlock control needs the additional opt-in below; UAC secure desktops, Ctrl+Alt+Delete and RDP remain unsupported.
 
-1. Quit the portable Glide instance. Extract the v0.7.0 package into a writable folder.
+1. Quit the portable Glide instance. Extract the current package into a writable folder.
 2. From PowerShell in that folder, run `.\Install-Service.ps1`. Approve the one-time Windows administrator prompt **as the same Windows account that will use Glide**. To retain a portable pairing, instead run `.\Install-Service.ps1 -SettingsPath 'C:\path\to\existing\Glide.ini'`. A first installation otherwise imports the blank INI beside the installer. Updates preserve the installed settings.
 3. Open **Glide (service)** from the Start menu, or use its tray icon. No administrator prompt is needed for normal reopening. The title says **SERVICE**. A paired app starts hidden at sign-in; a fresh installation opens for setup. For a fresh pairing, initiate **Pair & connect from the service PC** and confirm the code there, then reverse roles if needed. An unpaired service session does not accept unattended incoming first-pair requests. If installing service mode on both unpaired PCs, pair them in portable mode first, then import each PC's own INI during installation.
 
@@ -47,7 +47,7 @@ For an update, extract the new ZIP elsewhere and rerun its installer as the enro
 
 ### Control Windows sign-in and unlock
 
-On the receiving PC, finish pairing in the **SERVICE** app, select **This PC receives**, and start sharing. From an extracted v0.7.0 release folder, run:
+On the receiving PC, finish pairing in the **SERVICE** app, select **This PC receives**, and start sharing. From an extracted v0.7.0 or later release folder, run:
 
 ```powershell
 .\Install-Service.ps1 -EnableLoginControl
@@ -115,7 +115,7 @@ These changes target plausible causes of handoff lag. They cannot eliminate Wi-F
 - Control originates from the designated controlling PC. This is not automatic bidirectional ownership switching between both physical keyboards.
 - Handoff begins only when no key/button is held. Dragging windows/files across PCs is unsupported. The controlling PC's pointer is parked on its main display while remotely controlling the other PC.
 - Portable mode cannot control higher-privilege applications unless launched elevated. Service mode supports those windows on the normal desktop; the sign-in/unlock opt-in above adds Windows login input. UAC secure prompts, Ctrl+Alt+Delete and pre-Windows boot prompts require local control. If Windows blocks injection, Glide disconnects.
-- Built-in Windows screensavers without password protection close when active remote input arrives, including Blank, Bubbles, Mystify, Ribbons, 3D Text and Photos. Glide looks on the active normal/screensaver desktop without switching its hook thread. Idle connections leave the screensaver alone. The first event may only wake the screen; continue moving or type again afterward. Password-protected savers require sign-in, which can be controlled with the opt-in service path above. Custom savers with other window classes may require local dismissal.
+- Active remote input wakes non-password savers. For an actual idle-started saver, a short-lived thread attaches to the dedicated saver desktop with playback permission, sends a benign wake movement and requests visible saver windows to close. The normal hook thread stays on Default; up to 32 already-received packets are held in order until Default returns, while emergency/stop work remains responsive. Windows password/timeout/power settings are unchanged. Idle connections do not wake the saver. A three-second wake failure or queue overflow disconnects safely; Windows policy/access restrictions may require local dismissal. Password-protected savers use the optional sign-in/unlock path. On Default, only recognized built-in saver classes are explicitly targeted.
 - Use on trusted local networks. Discovery broadcasts every two seconds and removes absent peers after seven seconds; it is bounded to 32 peers. There is no WAN relay. Networking is IPv4. Complex multi-adapter, VPN, and guest-network discovery still needs physical validation.
 - Unsigned development executable; there is no code-signing certificate. Updates in v0.6.0 are explicitly initiated by the user.
 - v0.6.1 improved fast remote scrolling somewhat in user testing; v0.6.2 extends batching through the network receive path and removes redundant receiver mouse hooks. Automated checks preserve exact events and stop behavior; elimination of the remaining delay still needs two-PC acceptance. Tracked as [BUG-001](https://github.com/mmatx64/glide/blob/main/ISSUES.md).
@@ -139,6 +139,8 @@ Use `.\build.ps1 -SkipLocalCopy` to build, test, and package a release while `di
 For real SCM/session validation, run `tests\Glide.Tests\Validate-Service.ps1` in an Administrator PowerShell window after building. This installs/stops/restarts the service and launches a diagnostic child with no network or input injection. It checks the user token, session, wakeup, graceful shutdown, and restart, then restores normal configuration but leaves the service stopped. `-EnableAfterTest` starts normal sharing afterward; `-SettingsPath` selects an existing INI for first installation only. This test changes the local service installation and should be run when sharing can be interrupted.
 
 For the sign-in child, run `tests\Glide.Tests\Validate-LoginService.ps1` elevated with an existing service installation. It upgrades the installed executable from the built package, tests SYSTEM launch on Winlogon, cross-account machine DPAPI, pinned TLS on isolated loopback, hook-thread initialization and graceful stop without injecting input or locking/rebooting Windows. It restores the normal automatic service and its original running/stopped state. Two-PC acceptance must still exercise actual login/unlock input.
+
+For the real idle path, run `tests\Glide.Tests\Validate-IdleSaver.ps1` after building. It visibly starts the currently selected non-password saver through a temporary five-second runtime timeout, verifies its real process/window on Screen-saver, then exercises production wake and authenticated loopback replay with mock normal-desktop injection. Only benign wake movement is injected into the saver. It restores the original timeout without changing the saved selection/password settings. `-ExpectedSaver Bubbles.scr` additionally requires that exact saver process as evidence; select it through Windows Screen Saver Settings beforehand. This diagnostic is explicitly invoked, never part of normal startup or `--self-test`. Actual two-PC/application input remains a separate acceptance pass.
 
 ```powershell
 dotnet run --project tests/Glide.Tests -c Release

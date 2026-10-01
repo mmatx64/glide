@@ -66,7 +66,10 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] internal static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] internal static extern nint GetThreadDesktop(uint thread);
+    [DllImport("user32.dll", SetLastError = true)] internal static extern bool SetThreadDesktop(nint desktop);
+    [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(nint window, out uint processId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool SystemParametersInfo(uint action, uint parameter, out int value, uint flags);
+    [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)] internal static extern bool SetSystemParametersInfo(uint action, uint parameter, nint value, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint FindWindow(string className, string? title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern nint OpenInputDesktop(uint flags, bool inherit, uint access);
     [DllImport("user32.dll")] internal static extern bool CloseDesktop(nint desktop);

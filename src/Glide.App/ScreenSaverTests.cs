@@ -55,6 +55,68 @@ internal static class ScreenSaverTests
         finally { DestroyWindow(window); GC.KeepAlive(proc); }
         lines.Add("PASS active receiver movement/keys/buttons/batched wheels request wake; idle/Release/inactive/stale/controller input does not; real posted WM_CLOSE closes only the hidden test window (no desktop input)");
         BuiltinSavers(lines);
+        foreach (string mode in new[] { "resume", "emergency", "timeout", "overflow" })
+        {
+            DeferredInput(mode).GetAwaiter().GetResult();
+            lines.Add("PASS screensaver transition " + mode + ": bounded pending input retains order, releases held keys and keeps emergency/overflow/deadline handling responsive (mock wake/injection)");
+        }
+    }
+
+    private static async Task DeferredInput(string mode)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var identity = new PairingIdentity();
+        var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+        try
+        {
+            var connecting = Connection.ConnectAsync("127.0.0.1", ((IPEndPoint)listener.LocalEndpoint).Port,
+                Invitation.Parse(identity.Invitation), 1920, 1080, timeout.Token);
+            var accepting = Connection.AcceptAsync(await listener.AcceptTcpClientAsync(timeout.Token), identity, 1920, 1080, timeout.Token);
+            await using var client = await connecting; await using var server = await accepting;
+            using var waiting = new ManualResetEventSlim(); using var finished = new ManualResetEventSlim();
+            using var released = new ManualResetEventSlim(); using var failed = new ManualResetEventSlim();
+            bool blocked = false;
+            var records = new List<Input>();
+            using var worker = new InputWorker(inputs =>
+            {
+                foreach (var input in inputs)
+                {
+                    records.Add(input);
+                    if (input.Type == 1 && (input.Data.Keyboard.Flags & 2) == 0) Volatile.Write(ref blocked, true);
+                    if (input.Type == 1 && (input.Data.Keyboard.Flags & 2) != 0) released.Set();
+                    if (input.Type == 0 && input.Data.Mouse.X == 9000) finished.Set();
+                }
+                return (uint)inputs.Length;
+            }, wakePending: () => { if (!Volatile.Read(ref blocked)) return false; waiting.Set(); return true; });
+            worker.Notice += _ => failed.Set();
+            worker.Attach(server, false, true);
+            worker.ReceiveBatch(server, new Packet[]
+            {
+                new(MessageKind.Activate, 1000, 1000), new(MessageKind.Key, 65, 30),
+                new(MessageKind.Button, 2048, 120), new(MessageKind.Button, 2048, -120),
+                new(MessageKind.Key, 65, 30, 2), new(MessageKind.Button, 2), new(MessageKind.Button, 4),
+                new(MessageKind.Move, 9000, 1000)
+            });
+            if (!waiting.Wait(TimeSpan.FromSeconds(3)) || records.Count != 2) throw new Exception("Saver transition did not hold the bounded batch at its original position.");
+            if (mode == "resume")
+            {
+                Volatile.Write(ref blocked, false);
+                if (!finished.Wait(TimeSpan.FromSeconds(3)) || !server.IsAlive || records.Count != 8
+                    || records[0].Data.Mouse.X != 1000 || records[1].Data.Keyboard.Flags != 8
+                    || unchecked((int)records[2].Data.Mouse.Data) != 120 || unchecked((int)records[3].Data.Mouse.Data) != -120
+                    || records[4].Data.Keyboard.Flags != 10 || records[5].Data.Mouse.Flags != 2 || records[6].Data.Mouse.Flags != 4)
+                    throw new Exception("Deferred activation/key/wheel/button input was lost, duplicated or reordered.");
+            }
+            else
+            {
+                if (mode == "emergency") worker.Emergency();
+                if (mode == "overflow") worker.ReceiveBatch(server, Enumerable.Repeat(new Packet(MessageKind.Key, 66, 48), 257).ToArray());
+                if (!released.Wait(TimeSpan.FromSeconds(mode == "timeout" ? 5 : 1)) || server.IsAlive || records.Count != 3 || finished.IsSet)
+                    throw new Exception("Deferred saver input blocked stop/overflow/deadline cleanup or injected after shutdown.");
+                if (mode == "timeout" && !failed.IsSet) throw new Exception("Saver wake deadline did not report failure.");
+            }
+        }
+        finally { listener.Stop(); }
     }
 
     private static void BuiltinSavers(List<string> lines)
