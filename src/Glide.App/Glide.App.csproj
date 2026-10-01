@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <StripSymbols>true</StripSymbols>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Glide.ico</ApplicationIcon>
+    <AssemblyName>Glide</AssemblyName>
+    <Version>0.1.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\Glide.Core\Glide.Core.csproj" /></ItemGroup>
+</Project>

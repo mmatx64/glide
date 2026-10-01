@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+artifacts/
+dist/
+.vs/
+**/self-test/
+*.ini.tmp

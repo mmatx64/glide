@@ -1,0 +1,151 @@
+using System.Diagnostics;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+
+namespace Glide.Core;
+
+public sealed class Connection : IDisposable
+{
+    public const int Port = 24819;
+    private readonly TcpClient client;
+    private readonly SslStream stream;
+    private readonly Outbox outbox = new();
+    private readonly CancellationTokenSource lifetime = new();
+    private long lastReceived = Stopwatch.GetTimestamp();
+    private long sent, received;
+    private int stopped;
+    public int RemoteWidth { get; }
+    public int RemoteHeight { get; }
+    public double RoundTripMs { get; private set; }
+    public long Sent => Interlocked.Read(ref sent);
+    public long Received => Interlocked.Read(ref received);
+    public long Coalesced => outbox.Coalesced;
+    public bool IsAlive => Volatile.Read(ref stopped) == 0;
+    public event Action<Packet>? Input;
+
+    private Connection(TcpClient client, SslStream stream, int width, int height)
+    { this.client = client; this.stream = stream; RemoteWidth = width; RemoteHeight = height; }
+
+    public static async Task<Connection> ConnectAsync(string host, int port, Invitation invitation, int width, int height, CancellationToken cancellation)
+    {
+        var client = new TcpClient { NoDelay = true, SendBufferSize = 4096, ReceiveBufferSize = 16384 };
+        SslStream? stream = null;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(6));
+        try
+        {
+            await client.ConnectAsync(host, port, timeout.Token).ConfigureAwait(false);
+            stream = new SslStream(client.GetStream(), false, (_, cert, _, _) => cert is not null &&
+                CryptographicOperations.FixedTimeEquals(cert.GetCertHash(HashAlgorithmName.SHA256), invitation.Fingerprint));
+            await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            { TargetHost = "Glide", EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, timeout.Token).ConfigureAwait(false);
+            await stream.WriteAsync(invitation.Secret, timeout.Token).ConfigureAwait(false);
+            var accepted = new byte[1];
+            await stream.ReadExactlyAsync(accepted, timeout.Token).ConfigureAwait(false);
+            if (accepted[0] != 1) throw new AuthenticationException("Pairing was rejected.");
+            return await ExchangeDesktop(client, stream, width, height, timeout.Token).ConfigureAwait(false);
+        }
+        catch { stream?.Dispose(); client.Dispose(); throw; }
+    }
+
+    public static async Task<Connection> AcceptAsync(TcpClient client, PairingIdentity identity, int width, int height, CancellationToken cancellation)
+    {
+        client.NoDelay = true;
+        client.SendBufferSize = 4096; client.ReceiveBufferSize = 16384;
+        var stream = new SslStream(client.GetStream(), false);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(6));
+        try
+        {
+            await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+            { ServerCertificate = identity.Certificate, EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 }, timeout.Token).ConfigureAwait(false);
+            var secret = new byte[32];
+            await stream.ReadExactlyAsync(secret, timeout.Token).ConfigureAwait(false);
+            bool match = CryptographicOperations.FixedTimeEquals(secret, identity.Secret);
+            CryptographicOperations.ZeroMemory(secret);
+            if (!match) throw new AuthenticationException("Pairing was rejected.");
+            await stream.WriteAsync(new byte[] { 1 }, timeout.Token).ConfigureAwait(false);
+            return await ExchangeDesktop(client, stream, width, height, timeout.Token).ConfigureAwait(false);
+        }
+        catch { stream.Dispose(); client.Dispose(); throw; }
+    }
+
+    private static async Task<Connection> ExchangeDesktop(TcpClient client, SslStream stream, int width, int height, CancellationToken ct)
+    {
+        Coordinates.ValidateDesktop(width, height);
+        var bytes = new byte[Packet.Size];
+        new Packet(MessageKind.Hello, width, height, 1).Write(bytes);
+        await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
+        await stream.ReadExactlyAsync(bytes, ct).ConfigureAwait(false);
+        var hello = Packet.Read(bytes);
+        if (hello.Kind != MessageKind.Hello || hello.C != 1) throw new InvalidDataException("Incompatible Glide version.");
+        Coordinates.ValidateDesktop(hello.A, hello.B);
+        return new Connection(client, stream, hello.A, hello.B);
+    }
+
+    public bool Send(Packet packet)
+    {
+        if (!IsAlive) return false;
+        if (outbox.TryAdd(packet)) return true;
+        // Never silently drop key-up/button-up. Fail the entire session and release input.
+        Dispose();
+        return false;
+    }
+
+    public async Task RunAsync(CancellationToken cancellation)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, lifetime.Token);
+        var tasks = new[] { ReadLoop(linked.Token), WriteLoop(linked.Token), Heartbeat(linked.Token) };
+        try { await await Task.WhenAny(tasks).ConfigureAwait(false); }
+        finally
+        {
+            Dispose(); linked.Cancel();
+            try { await Task.WhenAll(tasks).ConfigureAwait(false); } catch { /* Preserve first failure. */ }
+        }
+    }
+    private async Task ReadLoop(CancellationToken ct)
+    {
+        var bytes = new byte[Packet.Size];
+        while (!ct.IsCancellationRequested)
+        {
+            await stream.ReadExactlyAsync(bytes, ct).ConfigureAwait(false);
+            var packet = Packet.Read(bytes);
+            Interlocked.Exchange(ref lastReceived, Stopwatch.GetTimestamp());
+            Interlocked.Increment(ref received);
+            if (packet.Kind == MessageKind.Ping) Send(packet with { Kind = MessageKind.Pong });
+            else if (packet.Kind == MessageKind.Pong)
+                RoundTripMs = Math.Max(0, Stopwatch.GetElapsedTime(packet.Stamp).TotalMilliseconds);
+            else Input?.Invoke(packet);
+        }
+    }
+    private async Task WriteLoop(CancellationToken ct)
+    {
+        var bytes = new byte[Packet.Size];
+        while (!ct.IsCancellationRequested)
+        {
+            var packet = await outbox.TakeAsync(ct).ConfigureAwait(false);
+            packet.Write(bytes);
+            await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
+            Interlocked.Increment(ref sent);
+        }
+    }
+    private async Task Heartbeat(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(400));
+        while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+        {
+            if (Stopwatch.GetElapsedTime(Interlocked.Read(ref lastReceived)).TotalMilliseconds > 1600)
+                throw new IOException("Connection stalled. Control returned to this PC.");
+            Send(new Packet(MessageKind.Ping, Stamp: Stopwatch.GetTimestamp()));
+        }
+    }
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref stopped, 1) != 0) return;
+        lifetime.Cancel(); client.Dispose();
+        // RunAsync drains tasks before stream disposal; socket close interrupts pending I/O.
+    }
+    public void Finish() { Dispose(); stream.Dispose(); outbox.Dispose(); lifetime.Dispose(); }
+}
