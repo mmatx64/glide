@@ -1,4 +1,5 @@
 param([switch]$SkipTests)
+$releaseVersion = '0.2.0'
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
@@ -26,6 +27,10 @@ try {
     New-Item -ItemType Directory -Force $packageFolder | Out-Null
     Copy-Item -LiteralPath artifacts/native/Glide.exe,Glide.ini,README.md,Allow-PrivateNetwork.ps1 -Destination $packageFolder -Force
     $packageFiles = 'Glide.exe','Glide.ini','README.md','Allow-PrivateNetwork.ps1' | ForEach-Object { Join-Path $packageFolder $_ }
-    Compress-Archive -LiteralPath $packageFiles -DestinationPath dist/Glide-0.1.0-win-x64.zip -Force
-    Get-Item dist/Glide/Glide.exe,dist/Glide-0.1.0-win-x64.zip | Select-Object FullName,Length
+    $zipPath = "dist/Glide-$releaseVersion-win-x64.zip"
+    Compress-Archive -LiteralPath $packageFiles -DestinationPath $zipPath -Force
+    $zipChecksum = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant() + "  Glide-$releaseVersion-win-x64.zip"
+    $exeChecksum = (Get-FileHash -LiteralPath (Join-Path $releaseFolder 'Glide.exe') -Algorithm SHA256).Hash.ToLowerInvariant() + '  Glide.exe'
+    Set-Content -LiteralPath "dist/SHA256SUMS-$releaseVersion.txt" -Value @($zipChecksum, $exeChecksum) -Encoding ascii
+    Get-Item dist/Glide/Glide.exe,$zipPath | Select-Object FullName,Length
 } finally { Pop-Location }

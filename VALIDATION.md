@@ -1,4 +1,22 @@
-# Glide 0.1 validation — October 1, 2026
+# Glide validation — October 1, 2026
+
+## v0.2.0: discovery and confirmed pairing
+
+Native executable: **4,453,888 bytes**; SHA-256 `61D6E9432D7BB66D829FA06BA100669747767AB62AA48A116490176F0DA07F5B`.
+
+Portable ZIP: **2,074,685 bytes**; SHA-256 `F108B2670E040D155E3168EB6D7939893C375D58BCB3900B6FB3FEEAB491B52F`.
+
+- Full Release NativeAOT build passed with warnings treated as errors.
+- **35 core checks passed**, including the 20 existing checks plus bounded discovery encoding, absence of pairing secrets in announcements, malformed packet rejection, self-filtering, IP refresh, peer expiry/capacity, real two-endpoint UDP discovery, certificate-bound commitments, per-session codes, withheld credentials before both approvals, matching codes, mutual credential exchange, declined-request cancellation, spoofed certificate rejection, and altered-nonce rejection before approval.
+- Native executable checks passed: INI/DPAPI persistence including pause/discovery preferences; actual NativeAOT UDP discovery and confirmed pairing; TLS input echo; three awaited listener stop/restart cycles; input-hook startup/emergency/teardown. No remote input was injected by these smoke tests.
+- Nearby-PC and confirmation screens were rendered with sample data and visually inspected. They are example UI states, not a claim of discovering a second physical PC.
+- Updated firewall script parsed successfully; it was **not executed** and no firewall rules were installed by the agent.
+- Same-PC encrypted transport RTT in the final test run: median **0.030 ms**, p95 **0.057 ms**, p99 **0.224 ms**. This is not cross-PC latency.
+- First-pairing trust requires comparing the 12-hex-character session code on both PCs. Discovery is unauthenticated and contains only public identity/status; credential release requires both confirmations. Later connections use the saved certificate pin. This implementation has automated negative-path tests, not an independent security audit.
+
+Still requires physical testing: broadcasts across the user's actual adapters/firewall, two-PC startup/reconnection/role reversal, changing DHCP addresses, sleep/wake, actual input behavior and handoff smoothness, and active-sharing resource use. See README.md for the acceptance pass.
+
+## v0.1.0 archived baseline
 
 Release executable: `dist/Glide/Glide.exe`, Windows x64 NativeAOT, **4,164,096 bytes**.
 

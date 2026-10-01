@@ -1,40 +1,49 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, tray operation, encrypted direct connections, and a warm connection before you cross a screen edge. Version 0.1 is an initial working build, not yet validated on two physical PCs.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, confirmed pairing without copying IPs or secrets, and encrypted direct connections. Version 0.2 remains a preview pending testing on two physical PCs.
 
-**[Download Glide for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.1.0/Glide-0.1.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.1.0)
+**[Download Glide for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.2.0/Glide-0.2.0-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.2.0)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
 ## Run it
 
 1. Extract the ZIP into a writable folder on each PC. Run **Glide.exe**. Windows 10/11 x64; no installer, .NET runtime, administrator rights, cloud account, or service required for ordinary use.
-2. On the **second PC**, select **This PC receives**, then **Start listening**. Allow private-network access if Windows asks. Note its IPv4 address and click **Copy code**.
-3. On the PC with your physical mouse and keyboard, select **This PC controls**. Enter the receiver's address and paste its pairing code. Use **Swap sides** to match your desk. Click **Start sharing**.
+2. Open Glide on **both PCs** and allow access on private networks if Windows asks. The other PC should appear under **Nearby PCs** within a few seconds. If more than one appears, use **Next PC**.
+3. On the PC with your physical mouse and keyboard, select **This PC controls**, select the nearby laptop, and click **Pair & connect**. Compare the short code on both screens and click **Codes match · Pair** on **both PCs**. Never approve different codes. The other PC automatically becomes the receiver; no IP or long pairing code needs to be copied.
 4. Wait for **Connected**, then move through the adjoining outer screen edge. Move back across the same boundary to return. Release held keys/buttons before leaving the controlling PC.
-5. **Ctrl + Alt + F12** on either PC stops sharing and restores local control. **Pause sharing** also stops it. Start again to resume. Closing the window hides it to the tray; double-click or right-click its tray icon to reopen. **Quit** exits.
+5. Use **Swap sides** to place the other PC left or right (pause first if already sharing). Glide remembers the pairing, role, and layout, then reconnects when both apps are opened again. A paired PC's changed IP is detected without replacing its trusted identity.
+6. **Ctrl + Alt + F12** on either PC stops sharing and restores local control. **Pause sharing** also stops it. The pause persists across launches. Start again or explicitly choose a role to resume. Closing the window hides it to the tray; double-click or right-click its tray icon to reopen. **Quit** exits.
 
-Turn off Mouse Without Borders while trying Glide so both apps do not intercept the same input. Start with an ordinary application on the receiver. Connections are never started automatically.
+Turn off Mouse Without Borders while trying Glide so both apps do not intercept the same input. Start with an ordinary application on the receiver. To reverse roles after pairing, select **This PC receives** on the old controller and **This PC controls** on the other PC. Pairing exchanges credentials both ways, so no new code is needed. Glide is not installed into Windows startup; automatic reconnection happens when you open it.
+
+### If the other PC does not appear
+
+Both PCs need version 0.2 for discovery. Check that they are on the same private LAN and not isolated by guest Wi-Fi. UDP broadcasts do not generally cross subnets or VPNs. **Manual setup** retains the original IP/code setup for those cases and for version 0.1 peers. The firewall helper below now handles discovery and pairing on both PCs.
 
 ### Firewall
 
-The receiver listens on **TCP 24819**. The app does not change firewall rules. If Windows does not offer a prompt, run the included `Allow-PrivateNetwork.ps1` in an Administrator PowerShell window on the receiving PC. The script limits access to this executable, private networks, and the local subnet. Review the script before running it. No router port forwarding is needed.
+Glide uses **TCP 24819** for input, **UDP 24820** for nearby discovery, and **TCP 24821** for confirmed pairing. The app does not change firewall rules. If Windows does not offer a prompt, run the included `Allow-PrivateNetwork.ps1` in an Administrator PowerShell window on **both PCs**. The script limits access to this executable, private networks, and the local subnet. Review it before running it. No router port forwarding is needed. Rerun the updated helper if you previously allowed only the v0.1 input port.
 
 The helper's remove command is:
 
 ```powershell
-Remove-NetFirewallRule -Name Glide-Portable-Private-24819
+Get-NetFirewallRule -Name 'Glide-Portable-*' | Remove-NetFirewallRule
 ```
 
 ## Portable settings
 
 All app settings, receiver identity, and remembered pairing credentials are in **Glide.ini beside Glide.exe**. Nothing is saved to an application settings folder or the registry. Changes are written atomically through a temporary sibling file. The app reports an error if its folder is read-only.
 
-`Role`, `PeerAddress`, and `RemoteSide` are human-readable. `ReceiverIdentity` and `PeerCredential` are encrypted with Windows DPAPI for the current Windows account on the current PC. Copy the pristine ZIP to a new PC; a configured INI's credentials cannot be transferred to a different account/computer. To start fresh, exit Glide and replace the INI with the supplied template. **New code** on the receiver revokes the previous pairing.
+`Role`, `PeerName`, `PeerAddress`, and `RemoteSide` are human-readable. `AutoConnect=True` remembers automatic reconnection; Pause and emergency stop set it to False. `DiscoveryEnabled=False` disables discovery and easy pairing after restarting, while manual setup remains available. Missing new keys in a v0.1 INI default to True. `ReceiverIdentity` and `PeerCredential` are encrypted with Windows DPAPI for the current Windows account on the current PC. Copy the pristine ZIP to a new PC; a configured INI's credentials cannot be transferred to a different account/computer. To start fresh, exit Glide and replace the INI with the supplied template. **Manual setup → New code** on the receiver revokes prior access to that PC.
+
+To upgrade in place, quit Glide, replace **Glide.exe**, and keep your own **Glide.ini**. Update the optional firewall helper as well. Existing pairings work; both PCs need the new version for discovery. The release ZIP always contains a blank settings template, never private credentials.
 
 Windows manages DPAPI master keys and temporary TLS private-key material itself; these are OS facilities, not additional Glide settings. The TLS key is not installed into a certificate store and is released when the identity is disposed.
 
-Keep pairing codes private: anyone with the code and network access can control a listening receiver. Codes persist until rotated; they are not one-time invitations. The sender pins the receiver certificate before transmitting the 256-bit pairing secret over TLS. Input never travels in cleartext. Glide does not log keystrokes, install a background service, or enable startup entries.
+Nearby discovery sends only a sanitized PC name, public certificate fingerprint, role, and connection status. The IP comes from the received packet; discovery is not proof of identity. First pairing pins the advertised TLS certificate and compares a fresh session code on both screens before exchanging credentials. A committed client nonce, random server nonce, and certificate fingerprint bind the comparison code. Rejecting, canceling, or timing out either prompt aborts the exchange. Paired reconnects verify the saved certificate before sending the secret, including after an IP change.
+
+Manual pairing codes remain private credentials: anyone with the code and network access can control a listening receiver. They persist until rotated and are not one-time invitations. Input never travels in cleartext. Glide does not log keystrokes, install a background service, or enable startup entries.
 
 ## Addressing transition stutter
 
@@ -54,7 +63,7 @@ These changes target plausible causes of handoff lag. They cannot eliminate Wi-F
 - Control originates from the designated controlling PC. This is not automatic bidirectional ownership switching between both physical keyboards.
 - Handoff begins only when no key/button is held. Dragging windows/files across PCs is unsupported. The controlling PC's pointer is parked on its main display while remotely controlling the other PC.
 - Windows secure desktops, UAC prompts, lock screens, Ctrl+Alt+Delete, and higher-privilege applications are not remotely controlled. If Windows blocks injection, Glide disconnects. Use the local keyboard/mouse for those screens.
-- Use on trusted local networks. There is no discovery service or WAN relay. The listener binds IPv4; use the receiver's IPv4 address or a hostname that resolves to it.
+- Use on trusted local networks. Discovery broadcasts every two seconds and removes absent peers after seven seconds; it is bounded to 32 peers. There is no WAN relay. Networking is IPv4. Complex multi-adapter, VPN, and guest-network discovery still needs physical validation.
 - Unsigned development executable; there is no code-signing certificate or automatic updater.
 
 ## Build and verify
@@ -74,11 +83,11 @@ dotnet run --project tests/Glide.Tests -c Release
 .\dist\Glide\Glide.exe --profile C:\temp\glide-idle.txt
 ```
 
-Self-test writes results under `self-test` beside the executable, checks Win32 structures, DPAPI INI round-tripping, NativeAOT TLS echo, hook startup, emergency handling, and hook teardown. It does not inject remote keystrokes. Preview renders the actual native controls without starting sharing or saving settings. Profile measures six seconds of standby CPU/memory and exits. Neither mode is a two-PC benchmark.
+Self-test writes results under `self-test` beside the executable and checks Win32 structures, INI/DPAPI round-tripping, NativeAOT TLS echo, discovery, mutual pairing, awaited role transitions, hook startup/emergency handling/teardown. It does not inject remote keystrokes. Preview renders native controls without networking or saving settings; `--preview-nearby` and `--preview-confirm` add example states. Profile measures six seconds of standby with networking disabled and exits. Neither mode is a two-PC benchmark.
 
 ### Two-PC acceptance pass
 
-1. Verify pairing, and verify an incorrect code is refused.
+1. Open both apps, verify discovery and matching-code pairing, and reject a request once. Reopen both apps and verify automatic reconnect; pause and restart to verify it stays paused. Change a PC's IP and verify it reconnects with its saved identity. Reverse Control/Receive roles without copying credentials.
 2. Make 50 crossings in both directions. Observe the first few movements after each crossing and the RTT readout, first on Ethernet and then on your usual network.
 3. Type mixed case and shortcuts in a disposable text document; test click, double-click, scroll, and dragging within the receiving PC.
 4. Hold a key on the remote PC, disconnect its network, and verify local control returns and the receiver releases held input. Test Ctrl+Alt+F12 on both PCs.

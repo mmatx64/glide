@@ -12,6 +12,8 @@ internal sealed class Engine : IDisposable
     private TcpListener? listener;
     private volatile Connection? connection;
     private volatile string status = "Ready when you are";
+    private volatile string peerHost = "";
+    internal event Action? EmergencyStopped;
     internal string Status => status;
     internal bool Running => task is { IsCompleted: false } && cancellation is { IsCancellationRequested: false };
     internal bool Connected => connection is { IsAlive: true };
@@ -19,10 +21,11 @@ internal sealed class Engine : IDisposable
     internal double Latency => connection?.RoundTripMs ?? 0;
     internal long Sent => connection?.Sent ?? 0;
     internal long Coalesced => connection?.Coalesced ?? 0;
-    internal void Start(bool controller, string host, Invitation? invitation, PairingIdentity? identity, bool right)
+    internal void Start(bool controller, string host, Invitation? invitation, PairingIdentity? identity, bool right, int port = Connection.Port)
     {
         if (task is { IsCompleted: false }) throw new InvalidOperationException("The previous connection is still closing. Try again in a moment.");
         input ??= CreateInput();
+        peerHost = host;
         cancellation?.Dispose(); cancellation = new CancellationTokenSource();
         var token = cancellation.Token;
         status = controller ? "Connecting securely…" : "Listening on TCP 24819";
@@ -32,7 +35,7 @@ internal sealed class Engine : IDisposable
             {
                 if (!controller)
                 {
-                    listener = new TcpListener(IPAddress.Any, Connection.Port);
+                    listener = new TcpListener(IPAddress.Any, port);
                     listener.Start(4);
                 }
                 while (!token.IsCancellationRequested)
@@ -42,7 +45,7 @@ internal sealed class Engine : IDisposable
                     {
                         var desktop = Native.Desktop;
                         if (controller)
-                            peer = await Connection.ConnectAsync(host, Connection.Port, invitation!, desktop.Width, desktop.Height, token);
+                            peer = await Connection.ConnectAsync(peerHost, port, invitation!, desktop.Width, desktop.Height, token);
                         else
                         {
                             var socket = await listener!.AcceptTcpClientAsync(token);
@@ -75,7 +78,7 @@ internal sealed class Engine : IDisposable
     {
         var worker = new InputWorker();
         worker.Notice += text => status = text;
-        worker.EmergencyStopped += () => Stop("Emergency stop · sharing is off");
+        worker.EmergencyStopped += () => { Stop("Emergency stop · sharing is off"); EmergencyStopped?.Invoke(); };
         return worker;
     }
     internal void Stop(string reason = "Sharing paused · local control")
@@ -83,11 +86,17 @@ internal sealed class Engine : IDisposable
         status = reason;
         cancellation?.Cancel(); listener?.Stop(); connection?.Dispose(); input?.Detach();
     }
+    internal void UpdateAddress(string address) => peerHost = address;
+    internal async Task StopAsync(string reason = "Sharing paused · local control")
+    {
+        Stop(reason);
+        if (task is not null) await task.ConfigureAwait(false);
+    }
     private static string Friendly(Exception ex) => ex switch
     {
         SocketException se when se.SocketErrorCode == SocketError.AddressAlreadyInUse => "Port 24819 is already in use.",
         SocketException => "Peer unavailable. Check its address, listener, and private-network firewall rule.",
-        System.Security.Authentication.AuthenticationException => "Pairing failed. Copy a fresh code from the other PC.",
+        System.Security.Authentication.AuthenticationException => "Pairing changed. Pause, then pair with the other PC again.",
         OperationCanceledException => "Connection timed out. Check the other PC and firewall.",
         EndOfStreamException => "Peer disconnected.",
         _ => ex.Message

@@ -20,7 +20,8 @@ public sealed class PairingIdentity : IDisposable
         Secret = secret ?? RandomNumberGenerator.GetBytes(32);
         if (Secret.Length != 32) throw new ArgumentException("Invalid pairing secret.");
     }
-    public string Invitation => new Invitation(Certificate.GetCertHash(HashAlgorithmName.SHA256), Secret).Encode();
+    public byte[] Fingerprint => Certificate.GetCertHash(HashAlgorithmName.SHA256);
+    public string Invitation => new Invitation(Fingerprint, Secret).Encode();
     // Schannel cannot use ephemeral TLS private keys. DefaultKeySet creates an OS-managed
     // temporary key deleted on Dispose; durable identity storage remains in Glide.ini.
     private static X509KeyStorageFlags KeyStorage => X509KeyStorageFlags.Exportable |

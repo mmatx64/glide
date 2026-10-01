@@ -7,10 +7,14 @@ namespace Glide;
 internal sealed class Settings
 {
     private readonly Dictionary<string, string> values = new(StringComparer.OrdinalIgnoreCase);
+    private string? decryptedCode;
     internal string Path { get; }
     internal string Role { get => Get("Role", "Controller"); set => values["Role"] = value; }
     internal string Host { get => Get("PeerAddress", ""); set => values["PeerAddress"] = value; }
     internal bool RemoteOnRight { get => Get("RemoteSide", "Right") == "Right"; set => values["RemoteSide"] = value ? "Right" : "Left"; }
+    internal bool AutoConnect { get => Get("AutoConnect", "True").Equals("True", StringComparison.OrdinalIgnoreCase); set => values["AutoConnect"] = value.ToString(); }
+    internal bool DiscoveryEnabled { get => Get("DiscoveryEnabled", "True").Equals("True", StringComparison.OrdinalIgnoreCase); set => values["DiscoveryEnabled"] = value.ToString(); }
+    internal string PeerName { get => Get("PeerName", ""); set => values["PeerName"] = value; }
     private string Get(string key, string fallback) => values.GetValueOrDefault(key, fallback);
     internal Settings(string? path = null)
     {
@@ -26,8 +30,8 @@ internal sealed class Settings
     }
     internal string PairingCode
     {
-        get => values.TryGetValue("PeerCredential", out var data) && data.Length > 0 ? Encoding.UTF8.GetString(Protect(Convert.FromBase64String(data), false)) : "";
-        set => values["PeerCredential"] = value.Length == 0 ? "" : Convert.ToBase64String(Protect(Encoding.UTF8.GetBytes(value), true));
+        get => decryptedCode ??= values.TryGetValue("PeerCredential", out var data) && data.Length > 0 ? Encoding.UTF8.GetString(Protect(Convert.FromBase64String(data), false)) : "";
+        set { values["PeerCredential"] = value.Length == 0 ? "" : Convert.ToBase64String(Protect(Encoding.UTF8.GetBytes(value), true)); decryptedCode = value; }
     }
     internal PairingIdentity Identity()
     {
@@ -50,7 +54,8 @@ internal sealed class Settings
     internal void Save()
     {
         values["Role"] = Role; values["PeerAddress"] = Host; values["RemoteSide"] = RemoteOnRight ? "Right" : "Left";
-        string text = "; Glide portable settings. Keep this folder writable.\r\n; Credentials use Windows DPAPI and work only for this Windows user on this PC.\r\n; No automatic startup or connection. TCP port 24819.\r\n[Glide]\r\n" +
+        values["AutoConnect"] = AutoConnect.ToString(); values["DiscoveryEnabled"] = DiscoveryEnabled.ToString();
+        string text = "; Glide portable settings. Keep this folder writable.\r\n; Credentials use Windows DPAPI and work only for this Windows user on this PC.\r\n; TCP 24819 input, UDP 24820 discovery, TCP 24821 pairing.\r\n[Glide]\r\n" +
             string.Join("\r\n", values.Select(kv => kv.Key + "=" + kv.Value.Replace("\r", "").Replace("\n", ""))) + "\r\n";
         File.WriteAllText(Path + ".tmp", text, new UTF8Encoding(false));
         File.Move(Path + ".tmp", Path, true);

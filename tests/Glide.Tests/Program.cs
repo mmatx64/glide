@@ -98,4 +98,6 @@ await Reject(() => stallClient.RunAsync(ct), "silent connection watchdog fires")
 Check(watch.Elapsed.TotalSeconds < 3 && !stallClient.IsAlive, "silent-peer recovery occurs within three seconds");
 stallClient.Finish(); stallServer.Finish(); listener.Stop();
 Console.WriteLine($"All {passed} checks passed.");
+await DiscoveryPairingTests.Run(Check);
+Console.WriteLine($"All {passed} checks passed including discovery and confirmed pairing.");
 static void CheckSilent(bool value) { if (!value) throw new Exception("Queue rejected coalescible motion."); }
