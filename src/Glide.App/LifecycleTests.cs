@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Glide contributors
+
 namespace Glide;
 
 internal static class LifecycleTests

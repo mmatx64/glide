@@ -12,7 +12,7 @@ v0.6.4: actual Windows saver processes on isolated desktops expose `Blank Screen
 
 v0.7.1: reproduced a real Windows idle start on local `Screen-saver` with the currently selected custom saver. Normal-desktop `SendInput` returned zero and left it active; attaching a fresh thread with read/write alone still returned access denied, while playback permission allowed injection. Production now opens with `READOBJECTS | WRITEOBJECTS | JOURNALPLAYBACK`, binds only the helper thread to the non-password dedicated saver desktop, sends a benign wake motion and closes visible saver windows there. Winlogon is rejected; on Default, only recognized built-in classes are closed. Real packets stay in their original bounded batch until Default returns. Emergency/stop work keeps running; overflow and a three-second deadline fail closed and release tracked input.
 
-Actual idle diagnostic passed with real TLS delivery and mock normal-desktop injection: the actual saver process/window exited, all activation/key down-up/click down-up/wheel reversal/movement packets replayed in order, and the peer stayed connected. The local saver is custom `NYANST~1.SCR`, so this is evidence for the real Windows desktop/transition path, not built-in idle compatibility on the user's receiver. The supplied diagnostic checks the actual process name and rejects wrong-saver evidence. Saved timeout, saver selection and password setting were restored/preserved. See VALIDATION for the final native/public release checks.
+Actual idle diagnostic passed with real TLS delivery and mock normal-desktop injection: the actual saver process/window exited, all activation/key down-up/click down-up/wheel reversal/movement packets replayed in order, and the peer stayed connected. The local saver is custom `NYANST~1.SCR`, so this is evidence for the real Windows desktop/transition path, not built-in idle compatibility on the user's receiver. The supplied diagnostic checks the actual process name and rejects wrong-saver evidence. Saved timeout, saver selection and password setting were restored/preserved.
 
 ## BUG-001: Fast remote wheel scrolling lags
 
@@ -30,7 +30,7 @@ Acceptance: fast bursts and reversals respond promptly without a growing playbac
 
 ## FEAT-001: User-initiated GitHub updates
 
-Implemented in v0.6.0: Check for updates, public stable-release lookup, administrator helper, verified download, portable/service replacement, settings preservation, service restart, and rollback. See [README](README.md#click-to-update) and [validation](VALIDATION.md).
+Implemented in v0.6.0: Check for updates, public stable-release lookup, administrator helper, verified download, portable/service replacement, settings preservation, service restart, and rollback. See [README](README.md#updates-and-settings).
 
 v0.6.0 uses the regular GitHub release channel: the earlier latest-release 404 was caused by every existing release being marked as a prerelease. Live UAC/SCM acceptance remains outstanding; automated validation covers verified downloads, mocked service failures, and a real Windows process-job lifetime test.
 

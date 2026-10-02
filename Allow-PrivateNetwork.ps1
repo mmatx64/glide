@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Glide contributors
+
 # Optional: run beside Glide.exe on BOTH PCs in an Administrator PowerShell window.
 # Only this executable, private networks, and local-subnet peers.
 # No rules are installed automatically by Glide.

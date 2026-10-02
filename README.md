@@ -1,180 +1,59 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.7.4** fixes remote right Shift typing by correcting scan-code flags, including packets from older controllers. It retains automatic service setup during updates, the tray menu, single-click opening, idle screensaver wake, and opt-in Windows sign-in/unlock receiver. This is preview software; actual right Shift typing, tray interactions, service-update setup, the reported receiver's idle-saver case, and two-PC sign-in/unlock still need acceptance.
+One mouse and keyboard, two Windows PCs. Glide is a small, portable app that lets you move across a screen edge and keep working on the other computer.
 
-**[Download Glide v0.7.4 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.7.4/Glide-0.7.4-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.7.4)
+**[Download v0.7.4 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.7.4/Glide-0.7.4-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.7.4)
 
-Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
+## Features
 
-The ZIP supports ordinary portable use and the optional service installation below.
+- Mouse, keyboard, extra mouse buttons, and vertical/horizontal scrolling.
+- Nearby-PC discovery and pairing with confirmation on just one PC.
+- Encrypted direct connections, remembered pairing, and automatic reconnection.
+- Left/right screen arrangement, tray controls, and an emergency stop shortcut.
+- Click-to-update with verified downloads and preserved settings.
+- Optional service mode for elevated apps, plus opt-in Windows sign-in/unlock control.
 
-## Run it
+## Get started
 
-1. Extract the ZIP into a writable folder on each PC. Run **Glide.exe**. Windows 10/11 x64; no installer, .NET runtime, administrator rights, cloud account, or service required for ordinary use.
-2. Open Glide on **both PCs** and allow access on private networks if Windows asks. The other PC should appear under **Nearby PCs** within a few seconds. If more than one appears, use **Next PC**.
-3. On the PC with your physical mouse and keyboard, select **This PC controls**, select the nearby laptop, and click **Pair & connect**. Compare the short code on both screens and click **Codes match · Pair** **only on this initiating PC**. Never approve different codes. Nothing needs to be clicked on the other PC: it displays the code, becomes the receiver, and connects automatically. Either PC can initiate as the controller.
-4. Wait for **Connected**, then move through the adjoining outer screen edge. Move back across the same boundary to return. Release held keys/buttons before leaving the controlling PC.
-5. Use **Swap sides** to place the other PC left or right (pause first if already sharing). Glide remembers the pairing, role, and layout, then reconnects when both apps are opened again. A paired PC's changed IP is detected without replacing its trusted identity.
-6. **Ctrl + Alt + F12** on either PC stops sharing and restores local control. **Pause sharing** also stops it. The pause persists across launches. Start again or explicitly choose a role to resume. Closing the window hides it to the tray; **single-click** its icon to reopen. **Right-click** for Open Glide, Start/Pause sharing, Role, Screen arrangement, Check for updates, About Glide, and Quit. The menu shows connection status and checks the current role and screen side; unavailable actions are disabled. **Quit** exits.
+1. Extract the ZIP on both PCs and run **Glide.exe**. Windows 10/11 x64; no .NET installation or administrator rights needed for portable use.
+2. Put both PCs on the same private network and allow Glide through Windows Firewall.
+3. On the PC with your mouse and keyboard, choose **This PC controls**, select the other PC, and click **Pair & connect**. Compare the codes on both screens; confirm **Codes match · Pair** on the initiating PC only.
+4. Once **Connected**, move through the adjoining screen edge. Cross back to return. Use **Swap sides** if the arrangement is reversed.
 
-Turn off Mouse Without Borders while trying Glide so both apps do not intercept the same input. Start with an ordinary application on the receiver. To reverse roles after pairing, select **This PC receives** on the old controller and **This PC controls** on the other PC. Pairing exchanges credentials both ways, so no new code is needed. Portable mode does not add Windows startup entries; automatic reconnection happens when you open it.
+Release held keys/buttons before crossing. **Ctrl + Alt + F12** stops sharing on either PC. **Pause sharing** stays paused until you resume. Closing the window hides Glide to the tray; click the icon to reopen, or right-click for controls and **Quit**.
 
-## Click-to-update
+## Updates and settings
 
-Click **Check for updates** at the bottom of the window. Glide checks the latest public, stable Windows x64 release in `mmatx64/glide`; it does not poll in the background or require a GitHub account. If a newer version exists, Glide shows the affected paths and asks whether to install. Approve the administrator prompt as the Windows account using Glide; service mode already runs elevated and needs no second prompt.
+Choose **Check for updates** on each PC. Updates preserve your pairing and `Glide.ini`; installed service copies are updated too. The updater uses public stable releases and may request administrator approval.
 
-The separate updater downloads into an administrator-protected staging folder, verifies GitHub's published SHA-256 digest and the expected ZIP contents, then asks Glide to release input and exit. It updates the portable folder you launched from (including `C:\Programs\Glide`) and any installed service copy in `%ProgramFiles%\Glide`. The desktop app and helper service currently share `Glide.exe`, so both are replaced together. Service mode retains its existing protected path; no installation is relocated.
-
-Each PC's `Glide.ini`, pairing, enrolled service account, and Pause state are retained. When a service is installed, v0.7.3's elevated updater automatically runs the verified release's `Install-Service.ps1 -Action Install -NoStart` after replacing files and before restarting. This refreshes service setup, firewall rules, the shortcut, and existing sign-in enrollment without another installer prompt. A running service is stopped and restarted; a stopped service stays stopped. Portable-only updates skip service setup. Install v0.7.3 once to gain this behavior for subsequent updates; older updaters retain their existing behavior when updating to v0.7.3.
-
-The service UI reopens when its service was running; otherwise the portable app reopens through the desktop shell. Installer errors, its 90-second deadline, and service-start failures trigger file rollback and restoration of the previous service run state. This rollback covers package files and service running/stopped state; it does not undo setup changes to firewall rules, ACLs, shortcuts, or service configuration. If recovery itself fails, the error dialog identifies the problem and remaining `.bak` files are retained beside the installation.
-
-The updater only handles public releases outside GitHub's prerelease channel, with a matching `Glide-VERSION-win-x64.zip` asset and SHA-256 digest. Private releases and prereleases are unsupported. v0.6.0 uses the regular release channel so GitHub's latest-release endpoint can find it; this does not remove the preview limitations below. Install v0.6.0 manually once to gain the updater, then use the button for later releases. Update each PC separately.
+Portable settings live beside `Glide.exe`. For a manual update, quit Glide and replace the executable, keeping your existing INI. Pairing credentials are protected for that Windows account and PC, so use the blank package INI when setting up a different computer.
 
 ## Optional service mode
 
-Service mode automatically starts Glide elevated at sign-in, so normal-desktop Windows credential dialogs and administrator applications can receive shared input without relaunching Glide as administrator. Install it on the receiving PC, or on both PCs if you reverse roles. It supports **one enrolled Windows administrator account and the active physical console session** per PC. Windows sign-in/unlock control needs the additional opt-in below; UAC secure desktops, Ctrl+Alt+Delete and RDP remain unsupported.
-
-1. Quit the portable Glide instance. Extract the current package into a writable folder.
-2. From PowerShell in that folder, run `.\Install-Service.ps1`. Approve the one-time Windows administrator prompt **as the same Windows account that will use Glide**. To retain a portable pairing, instead run `.\Install-Service.ps1 -SettingsPath 'C:\path\to\existing\Glide.ini'`. A first installation otherwise imports the blank INI beside the installer. Updates preserve the installed settings.
-3. Open **Glide (service)** from the Start menu, or use its tray icon. No administrator prompt is needed for normal reopening. The title says **SERVICE**. A paired app starts hidden at sign-in; a fresh installation opens for setup. For a fresh pairing, initiate **Pair & connect from the service PC** and confirm the code there, then reverse roles if needed. An unpaired service session does not accept unattended incoming first-pair requests. If installing service mode on both unpaired PCs, pair them in portable mode first, then import each PC's own INI during installation.
-
-**Pause sharing** and the emergency shortcut stay paused across sign-ins. **Quit** keeps the desktop app closed until the shortcut is used, the service is restarted, or you sign in again. Closing the window just hides it. Stop the service to stop its elevated child process; a child that cannot exit is terminated after a five-second grace period.
-
-Installation creates the automatic **GlideSessionService** under LocalSystem, a protected `%ProgramFiles%\Glide\Glide.exe`, a Start menu shortcut, and private-LAN firewall rules restricted to that executable and the local subnet. Use `-SkipFirewall` if those rules are managed separately. The service launches only that fixed executable; the desktop app uses the enrolled user's elevated token. The optional sign-in receiver runs as SYSTEM as described below. There is no arbitrary-command interface. Only pair a PC you trust with administrator application access and, if enabled, Windows sign-in input.
-
-Service-mode settings are in **`%ProgramData%\Glide\Service\Glide.ini`**, protected for administrators/SYSTEM and still encrypted with that user's DPAPI. `service.log` in the same folder records bounded lifecycle/error messages, never input contents or credentials. Portable INI files are not modified. Use Glide's UI for normal settings changes; direct edits to service settings need elevation.
-
-For an update, extract the new ZIP elsewhere and rerun its installer as the enrolled account; it stops the old service copy, replaces the protected executable, keeps the INI, and restarts. Run `.\Install-Service.ps1 -Action Status` to inspect installation, or `.\Install-Service.ps1 -Action Uninstall` to remove the service, shortcut, and its firewall rules. Uninstall retains installed files and settings for recovery. To return to portable mode, use the original portable folder, or copy the service INI back under the same account using an administrator file operation.
-
-### Control Windows sign-in and unlock
-
-On the receiving PC, finish pairing in the **SERVICE** app, select **This PC receives**, and start sharing. From an extracted v0.7.0 or later release folder, run:
+Service mode starts Glide elevated at sign-in so it can control administrator apps on the normal desktop. Quit portable Glide, then run this from the extracted package as the Windows administrator account that will use Glide:
 
 ```powershell
-.\Install-Service.ps1 -EnableLoginControl
+.\Install-Service.ps1
 ```
 
-Approve setup as the enrolled administrator account. This is a one-time opt-in; updating alone does not enable it. The automatic service can then accept the existing paired controller before sign-in after reboot/sign-out, and while the enrolled account is locked. Windows still validates the PIN/password you type; Glide does not store Windows login credentials or enable automatic sign-in. The network must be available before sign-in. The controller reconnects during the switch between the sign-in receiver and the normal user app; cross the screen edge again after reconnecting.
+Open **Glide (service)** from the Start menu. To keep an existing portable pairing, install with `-SettingsPath 'C:\path\to\Glide.ini'`. Service settings live in `%ProgramData%\Glide\Service\Glide.ini`. For a new service pairing, initiate from the service PC; if both PCs use service mode, pair in portable mode first and import each PC's own INI.
 
-The fixed sign-in child runs as SYSTEM on the physical console's Winlogon desktop, with no visible UI, updater, first-pairing server or controller mode. A separate machine-DPAPI copy of the existing receiver certificate/secret is kept under the protected service data directory, accessible only to administrators/SYSTEM. The ordinary service INI remains encrypted for its enrolled user. Pause/emergency stop, clearing pairing or switching to Controller removes the active sign-in enrollment; starting a paired Receiver reenrolls it while the opt-in remains enabled. Normal service updates preserve that opt-in. Run `.\Install-Service.ps1 -DisableLoginControl` to remove it.
+To enable sign-in/unlock input, first pair the service receiver and start sharing, then run `.\Install-Service.ps1 -EnableLoginControl` from the package folder. This is opt-in; Windows still checks your PIN/password, and Glide does not store it. Try remote **Win+L** unlock before relying on reboot/sign-out control. Use `-DisableLoginControl` to turn it off, or `-Action Uninstall` to remove the service.
 
-Try **Win+L** and remote unlock before rebooting. Then test sign-out and a reboot while keeping the controller open. This covers Windows sign-in once Windows and the network have started; firmware/BitLocker prompts and setups requiring Ctrl+Alt+Delete need local input. Control of another user's logged-in/locked session, RDP, and UAC secure prompts is unavailable. Automated checks cannot establish your two-PC boot/unlock behavior.
+## Gotchas
 
-### If the other PC does not appear
+- Turn off Mouse Without Borders or similar input-sharing apps while using Glide.
+- No clipboard, file transfer, audio sharing, or dragging between PCs. One designated PC controls the other; you can reverse roles in the app.
+- Guest Wi-Fi, VPNs, or different subnets may prevent discovery. Try **Manual setup**. The included `Allow-PrivateNetwork.ps1` can add private-LAN firewall rules; ports are TCP 24819/24821 and UDP 24820.
+- The executable is unsigned, so Windows security tools may warn or block it.
+- Portable input cannot control elevated apps without elevation. Service mode supports one enrolled administrator account on the physical console; RDP, UAC secure prompts, Ctrl+Alt+Delete, and pre-Windows/BitLocker prompts require local input.
+- Fast scrolling can still lag, and idle screensaver wake/sign-in behavior needs checking on your PCs. Keep local input available. Known issues are tracked in [ISSUES.md](https://github.com/mmatx64/glide/blob/main/ISSUES.md).
+- Pair only computers you trust. An unpaired portable receiver accepts initial pairing while its window is open and sharing is not paused; always compare the codes. Manual pairing codes are reusable credentials—keep them private.
 
-Both PCs need version 0.3 for discovery and one-sided pairing. Check that they are on the same private LAN and not isolated by guest Wi-Fi. UDP broadcasts do not generally cross subnets or VPNs. **Manual setup** retains the original IP/code setup for those cases and older peers. The firewall helper below handles discovery and pairing on both PCs.
+## Build
 
-### Smart App Control
+Requires the .NET 10 SDK, Visual Studio C++ Build Tools, and a Windows SDK. Run `.\build.ps1`; it builds a self-contained native executable, runs native self-tests, and creates the release ZIP in `dist/`. Use `-SkipLocalCopy` to leave your existing local copy alone. The optional local `tests/Glide.Tests` folder is not tracked in Git.
 
-This preview executable is **unsigned**. Windows Smart App Control can block an unknown unsigned app; changing the filename, icon, or ZIP does not solve that. A release signed with a certificate from a trusted code-signing provider (or Microsoft Artifact Signing) is needed to address signing-based blocks. There is no signing account/certificate configured for this project yet, and this release does not claim to fix the warning. Smart App Control has no per-app allow exception. See [Microsoft's signing guidance](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control) and [Smart App Control FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions).
+## License
 
-### Firewall
-
-Glide uses **TCP 24819** for input, **UDP 24820** for nearby discovery, and **TCP 24821** for confirmed pairing. The app does not change firewall rules. If Windows does not offer a prompt, run the included `Allow-PrivateNetwork.ps1` in an Administrator PowerShell window on **both PCs**. The script limits access to this executable, private networks, and the local subnet. Review it before running it. No router port forwarding is needed. Rerun the updated helper if you previously allowed only the v0.1 input port.
-
-The helper's remove command is:
-
-```powershell
-Get-NetFirewallRule -Name 'Glide-Portable-*' | Remove-NetFirewallRule
-```
-
-## Portable settings
-
-In portable mode, all app settings, receiver identity, and remembered pairing credentials are in **Glide.ini beside Glide.exe**. Nothing is saved to an application settings folder or the registry. Changes are written atomically through a temporary sibling file. The app reports an error if its folder is read-only. Installed service mode uses the protected location above.
-
-`Role`, `PeerName`, `PeerAddress`, and `RemoteSide` are human-readable. `AutoConnect=True` remembers automatic reconnection; Pause and emergency stop set it to False. `DiscoveryEnabled=False` disables discovery and easy pairing after restarting, while manual setup remains available. Missing new keys in a v0.1 INI default to True. `ReceiverIdentity` and `PeerCredential` are encrypted with Windows DPAPI for the current Windows account on the current PC. Copy the pristine ZIP to a new PC; a configured INI's credentials cannot be transferred to a different account/computer. To start fresh, exit Glide and replace the INI with the supplied template. **Manual setup → New code** on the receiver revokes prior access to that PC.
-
-To upgrade in place, quit Glide, replace **Glide.exe**, and keep your own **Glide.ini**. Update the optional firewall helper as well. Existing pairings work; both PCs need the new version for discovery. The release ZIP always contains a blank settings template, never private credentials.
-
-Windows manages DPAPI master keys and temporary TLS private-key material itself; these are OS facilities, not additional Glide settings. The TLS key is not installed into a certificate store and is released when the identity is disposed.
-
-Nearby discovery sends only a sanitized PC name, public certificate fingerprint, role, and connection status. The IP comes from the received packet; discovery is not proof of identity. First pairing pins the advertised TLS certificate and displays a fresh session code on both screens before exchanging credentials. A committed client nonce, random server nonce, and certificate fingerprint bind the comparison code. Only the initiator confirms; rejection or timeout aborts the exchange. Both endpoints prove possession of their TLS private keys, and the exchanged identity must match that proof. Paired reconnects verify the saved certificate before sending the secret, including after an IP change.
-
-An unpaired portable PC accepts incoming first pairing automatically while its Glide window is open and sharing is not paused. Use this convenience on a trusted LAN: another local user can initiate first pairing without a receiving-side approval. Once paired, incoming easy-pairing requests must prove the remembered PC's identity; an unrelated PC cannot replace it by copying its name or discovery announcement. Pause/emergency stop blocks incoming easy pairing too. A remembered PC can reconnect while the window is hidden. Reset the saved pairing before switching to a different workstation.
-
-Manual pairing codes remain private credentials: anyone with the code and network access can control a listening receiver. They persist until rotated and are not one-time invitations. Input never travels in cleartext. Glide does not log keystrokes. Service installation and startup are opt-in through the installer.
-
-## Addressing transition stutter
-
-- TLS authentication and desktop negotiation complete **before** edge crossing.
-- `TCP_NODELAY`, small socket buffers, and a 400 ms heartbeat avoid reconnecting at the edge and expose real round-trip latency in the window.
-- A dedicated message-loop thread handles Windows hooks. It queues input; it never waits for a network write.
-- UI polling repaints only when displayed state changes. Buffered window painting and unchanged-control checks avoid the previous half-second refresh flicker.
-- Adjacent queued absolute mouse positions collapse into the latest position. Key/button transitions remain ordered barriers, so a click cannot overtake its position.
-- A preallocated queue sends up to 32 already-queued events in one TLS write. There is no batching timer or wait to fill a batch. This reduces allocation and encryption/write overhead during bursts; TLS authentication, encryption, event order, and the 256-event queue limit remain in place.
-- The receiver drains up to 32 already-queued packets per wake and injects consecutive wheel events in one `SendInput` call. Each wheel delta remains a separate INPUT record, including high-resolution deltas and direction/axis changes. Position, key, button and release events remain ordering barriers. Input wakes cannot pile up one per packet, and each drain yields to queued emergency/stop commands.
-- v0.6.2 reads available TLS plaintext in bounded batches and queues each complete batch before waking the input thread. It waits only for an incomplete packet, never for more input to fill a batch. The receiver keeps the keyboard emergency hook, while only controllers install a mouse capture hook.
-- A bounded queue fails the session rather than dropping a key-up or button-up. A silent-peer watchdog disconnects after approximately 1.6–2 seconds and releases tracked remote input.
-- The client reconnects in the background after ordinary connection failures. Pause and emergency stop disable reconnecting until you press Start again.
-
-These changes target plausible causes of handoff lag. They cannot eliminate Wi-Fi contention, TCP retransmission delays, receiver scheduling stalls, or network-adapter power saving. The displayed RTT measures the encrypted connection; it is not end-to-end cursor/display latency.
-
-## Current scope and limits
-
-- One controlling PC and one receiver, arranged left or right. Multiple monitors are treated as each PC's bounding desktop. Complex layouts with gaps, unusual DPI arrangements, and cross-PC speed matching still need physical validation.
-- Mouse movement, left/right/middle/X buttons, vertical/horizontal wheel, and scan-code keyboard forwarding. No clipboard sharing, file transfer, audio, or touch/pen forwarding in this version.
-- Control originates from the designated controlling PC. This is not automatic bidirectional ownership switching between both physical keyboards.
-- Handoff begins only when no key/button is held. Dragging windows/files across PCs is unsupported. The controlling PC's pointer is parked on its main display while remotely controlling the other PC.
-- Portable mode cannot control higher-privilege applications unless launched elevated. Service mode supports those windows on the normal desktop; the sign-in/unlock opt-in above adds Windows login input. UAC secure prompts, Ctrl+Alt+Delete and pre-Windows boot prompts require local control. If Windows blocks injection, Glide disconnects.
-- Active remote input wakes non-password savers. For an actual idle-started saver, a short-lived thread attaches to the dedicated saver desktop with playback permission, sends a benign wake movement and requests visible saver windows to close. The normal hook thread stays on Default; up to 32 already-received packets are held in order until Default returns, while emergency/stop work remains responsive. Windows password/timeout/power settings are unchanged. Idle connections do not wake the saver. A three-second wake failure or queue overflow disconnects safely; Windows policy/access restrictions may require local dismissal. Password-protected savers use the optional sign-in/unlock path. On Default, only recognized built-in saver classes are explicitly targeted.
-- Use on trusted local networks. Discovery broadcasts every two seconds and removes absent peers after seven seconds; it is bounded to 32 peers. There is no WAN relay. Networking is IPv4. Complex multi-adapter, VPN, and guest-network discovery still needs physical validation.
-- Unsigned development executable; there is no code-signing certificate. Updates in v0.6.0 are explicitly initiated by the user.
-- v0.6.1 improved fast remote scrolling somewhat in user testing; v0.6.2 extends batching through the network receive path and removes redundant receiver mouse hooks. Automated checks preserve exact events and stop behavior; elimination of the remaining delay still needs two-PC acceptance. Tracked as [BUG-001](https://github.com/mmatx64/glide/blob/main/ISSUES.md).
-
-## Build and verify
-
-Version **0.4.0** preserves the controlling keyboard's interpretation of keypad digits/decimal and navigation even when the receiver has a different Num Lock state. Num Lock presses also update the controlling keyboard's state and light during remote control. Update both executables for the complete fix. Cursor parking behavior is unchanged.
-
-Version **0.7.4** clears the hook's extended metadata for left/right Shift scan codes before forwarding or injecting them. Right Shift uses scan code `0x36` without an E0 prefix; passing an extended flag can prevent Windows from recognizing it. Key-up and disconnect cleanup use the same normalized identity. Update the receiving PC to fix typing even with an older controller; update both PCs to normalize capture as well. Native self-test checks Windows scan-code decoding and `?`, `/`, uppercase/lowercase translation without typing into the desktop, plus receiver order and release cleanup with mock injection.
-
-Build prerequisites: .NET 10 SDK, Visual Studio C++ Build Tools, and a Windows SDK. These are **only needed to build**, not to run the supplied native executable. There are no third-party application packages.
-
-```powershell
-.\build.ps1
-```
-
-This runs the protocol/security tests, publishes NativeAOT, runs the native smoke test, and creates `dist/Glide` plus a ZIP with fresh settings. It never packages a user's saved credentials. Debug symbols stay in `artifacts/native`.
-
-The build also runs offline service-cleanup tests with mocked Windows service commands. They check that failed validation restores normal service configuration without touching the installed service. Core and native checks exercise input overflow, cancellation, and receiver shutdown without injecting remote input.
-
-Use `.\build.ps1 -SkipLocalCopy` to build, test, and package a release while `dist/Glide/Glide.exe` is running; the running app and its settings are left in place.
-
-For real SCM/session validation, run `tests\Glide.Tests\Validate-Service.ps1` in an Administrator PowerShell window after building. This installs/stops/restarts the service and launches a diagnostic child with no network or input injection. It checks the user token, session, wakeup, graceful shutdown, and restart, then restores normal configuration but leaves the service stopped. `-EnableAfterTest` starts normal sharing afterward; `-SettingsPath` selects an existing INI for first installation only. This test changes the local service installation and should be run when sharing can be interrupted.
-
-For the sign-in child, run `tests\Glide.Tests\Validate-LoginService.ps1` elevated with an existing service installation. It upgrades the installed executable from the built package, tests SYSTEM launch on Winlogon, cross-account machine DPAPI, pinned TLS on isolated loopback, hook-thread initialization and graceful stop without injecting input or locking/rebooting Windows. It restores the normal automatic service and its original running/stopped state. Two-PC acceptance must still exercise actual login/unlock input.
-
-For the real idle path, run `tests\Glide.Tests\Validate-IdleSaver.ps1` after building. It visibly starts the currently selected non-password saver through a temporary five-second runtime timeout, verifies its real process/window on Screen-saver, then exercises production wake and authenticated loopback replay with mock normal-desktop injection. Only benign wake movement is injected into the saver. It restores the original timeout without changing the saved selection/password settings. `-ExpectedSaver Bubbles.scr` additionally requires that exact saver process as evidence; select it through Windows Screen Saver Settings beforehand. `-RequestSystemStart` instead uses Windows' `SC_SCREENSAVE` command on a hidden window: this exercises the managed saver desktop without changing the timeout, but does not validate automatic idle scheduling. This diagnostic is explicitly invoked, never part of normal startup or `--self-test`. Actual two-PC/application input remains a separate acceptance pass.
-
-```powershell
-dotnet run --project tests/Glide.Tests -c Release
-dotnet run --project tests/Glide.Tests -c Release -- --benchmark
-.\dist\Glide\Glide.exe --self-test
-.\dist\Glide\Glide.exe --preview C:\temp\glide-preview.bmp
-.\dist\Glide\Glide.exe --profile C:\temp\glide-idle.txt
-```
-
-Self-test writes results under `self-test` beside the executable and checks Win32 structures, Unicode titles/text, INI/DPAPI round-tripping, NativeAOT TLS echo, discovery, one-sided verified pairing, awaited role transitions, hook startup/emergency handling/teardown. It does not inject remote keystrokes. Preview uses sample data without loading saved credentials, networking, or saving settings. Add `--preview-connected`, `--preview-nearby`, `--preview-manual`, `--preview-paused`, or `--preview-reconnecting` for those states. `--receiver-preview` selects the receiving role; `--preview-confirm` shows incoming pairing, with `--preview-outgoing` for the initiating screen. Use `--preview-left`, `--preview-long-name`, `--preview-error`, or `--preview-scale 1.5` for layout checks. `--preview-interactive` keeps the sample window open until Quit; Start does not connect. Profile measures six seconds of standby with networking disabled, reports repaint/refresh counts, and exits. Neither mode is a two-PC benchmark.
-
-Add `--preview-tray` to an interactive preview to show a tray icon and inspect the real tray menu by right-clicking the preview window. This still uses sample state without networking or saving settings; sharing and update actions are disabled.
-
-The optional `--benchmark` runs synthetic encrypted loopback traffic without input injection or saved credentials. It reports sequential and 64-event burst RTT distributions, TLS write counts, process CPU, and allocations. These are same-PC transport measurements, not Wi-Fi or end-to-end cursor latency. Native self-test also checks keypad INPUT construction and Windows character translation with synthetic Num Lock states; actual remote typing still requires the pass below.
-
-### Two-PC acceptance pass
-
-Native self-test also launches the installed built-in savers on private test desktops and verifies their real windows can be discovered and closed. It never switches the visible desktop or changes the user's screensaver settings; absent built-in saver files are reported as skipped.
-
-1. Open both apps, verify discovery, initiate pairing on one PC and verify the code there only. Leave the receiving PC untouched and check that both connect. Reject a request once on the initiator. Reopen both apps and verify automatic reconnect; pause and restart to verify it stays paused. Change a PC's IP and verify it reconnects with its saved identity. Reverse Control/Receive roles without copying credentials.
-2. Make 50 crossings in both directions. Observe the first few movements after each crossing and the RTT readout, first on Ethernet and then on your usual network.
-3. Type mixed case and shortcuts in a disposable text document; test click, double-click, scroll, and dragging within the receiving PC. Start with opposite Num Lock states on the PCs: check keypad 0–9 and decimal with the controller's Num Lock on, then keypad navigation with it off. Toggle Num Lock while remote and check the controlling keyboard's light, Shift+keypad, dedicated arrows/Home/End/Delete, and keypad Enter/operators. Hold a keypad key across a Num Lock/Shift change, then release it and return locally; check that no key stays held or gets swallowed.
-4. Hold a key on the remote PC, disconnect its network, and verify local control returns and the receiver releases held input. Test Ctrl+Alt+F12 on both PCs.
-5. Test sleep/wake, pause/resume, display changes, differing display scales, and reconnect after closing/reopening the receiving app. Let a non-password screensaver start on the receiver, then cross to it or move/type/scroll if already remote: it should dismiss and input should resume. Repeat in portable/service mode, ensure an idle connection still allows the saver to start, and confirm a password-protected saver still requires local sign-in.
-6. Enable sign-in control on a paired service Receiver. Test Win+L, sign-out, and reboot with the controller open: reconnect, cross the edge, dismiss the lock screen, enter the Windows PIN/password and verify normal sharing resumes after the handoff. Check Pause/emergency stop disables login access, Controller role removes enrollment, pairing rotation revokes the old controller, and another logged-in account is not controlled. Keep local input available during preview acceptance.
-
-## Code map
-
-- `src/Glide.Core`: pinned TLS pairing, fixed-size wire protocol, bounded/coalescing outbox, heartbeat and coordinate conversion.
-- `src/Glide.App`: native Win32 UI (`Interface.cs` draws the desk/session panels), dedicated input thread, connection lifecycle, portable INI/DPAPI storage.
-- `tests/Glide.Tests`: dependency-free protocol, queue, authentication, loopback latency, and recovery checks.
-
-Reference behavior was checked against Microsoft's [Mouse Without Borders overview](https://learn.microsoft.com/en-us/windows/powertoys/mouse-without-borders), [low-level hook guidance](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc), and [SendInput restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
+Copyright © 2026 Glide contributors. Licensed under **GNU GPL version 3 or any later version** (`GPL-3.0-or-later`): you can use, study, modify, and share Glide, including commercially, under the GPL's terms. Distributed modified versions must preserve those freedoms and provide corresponding source. Glide comes without warranty. See the full [LICENSE](https://github.com/mmatx64/glide/blob/main/LICENSE).

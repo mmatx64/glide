@@ -5,3 +5,4 @@ dist/
 .vs/
 **/self-test/
 *.ini.tmp
+/tests/Glide.Tests/
