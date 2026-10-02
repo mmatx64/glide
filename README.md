@@ -1,8 +1,8 @@
 # Glide
 
-A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.7.3** automatically runs the downloaded service installer during updates, with no additional installer prompt. It retains the tray menu, single-click opening, idle screensaver wake, and opt-in Windows sign-in/unlock receiver. This is preview software; actual tray interactions, service-update setup, the reported receiver's idle-saver case, and two-PC sign-in/unlock still need acceptance.
+A small, portable Windows mouse and keyboard bridge for **two PCs**. Native dark interface, automatic nearby-PC discovery, pairing from one PC without copying IPs or secrets, and encrypted direct connections. Version **0.7.4** fixes remote right Shift typing by correcting scan-code flags, including packets from older controllers. It retains automatic service setup during updates, the tray menu, single-click opening, idle screensaver wake, and opt-in Windows sign-in/unlock receiver. This is preview software; actual right Shift typing, tray interactions, service-update setup, the reported receiver's idle-saver case, and two-PC sign-in/unlock still need acceptance.
 
-**[Download Glide v0.7.3 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.7.3/Glide-0.7.3-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.7.3)
+**[Download Glide v0.7.4 for Windows x64](https://github.com/mmatx64/glide/releases/download/v0.7.4/Glide-0.7.4-win-x64.zip)** · [Release notes](https://github.com/mmatx64/glide/releases/tag/v0.7.4)
 
 Download the portable ZIP from the release, extract it on both PCs, and follow the steps below. The automatically generated “Source code” downloads are for building the app yourself.
 
@@ -125,6 +125,8 @@ These changes target plausible causes of handoff lag. They cannot eliminate Wi-F
 ## Build and verify
 
 Version **0.4.0** preserves the controlling keyboard's interpretation of keypad digits/decimal and navigation even when the receiver has a different Num Lock state. Num Lock presses also update the controlling keyboard's state and light during remote control. Update both executables for the complete fix. Cursor parking behavior is unchanged.
+
+Version **0.7.4** clears the hook's extended metadata for left/right Shift scan codes before forwarding or injecting them. Right Shift uses scan code `0x36` without an E0 prefix; passing an extended flag can prevent Windows from recognizing it. Key-up and disconnect cleanup use the same normalized identity. Update the receiving PC to fix typing even with an older controller; update both PCs to normalize capture as well. Native self-test checks Windows scan-code decoding and `?`, `/`, uppercase/lowercase translation without typing into the desktop, plus receiver order and release cleanup with mock injection.
 
 Build prerequisites: .NET 10 SDK, Visual Studio C++ Build Tools, and a Windows SDK. These are **only needed to build**, not to run the supplied native executable. There are no third-party application packages.
 

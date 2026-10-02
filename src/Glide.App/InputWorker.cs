@@ -267,7 +267,8 @@ internal sealed class InputWorker : IDisposable
                 // Otherwise Windows keeps reporting the old keypad meaning here.
                 bool localNumLock = vk == 0x90;
                 suppressed[keyId] = !up && !localNumLock;
-                connection.Send(new Packet(MessageKind.Key, vk, (int)data.Scan, ((data.Flags & 1) != 0 ? 1 : 0) | (up ? 2 : 0)));
+                connection.Send(new Packet(MessageKind.Key, vk, (int)data.Scan,
+                    KeyFlags(vk, (int)data.Scan, ((data.Flags & 1) != 0 ? 1 : 0) | (up ? 2 : 0))));
                 return localNumLock ? CallNextHookEx(0, code, wParam, lParam) : 1;
             }
             if (suppressed[keyId]) { if (up) suppressed[keyId] = false; return 1; }
@@ -351,18 +352,24 @@ internal sealed class InputWorker : IDisposable
         Inject(BuildKeyInput(packet), required);
     }
     internal static int KeyIdentity(int vk, int scan, int flags) =>
-        scan == 0 ? 0x200 | vk : (scan & 0xff) | ((flags & 1) << 8);
+        scan == 0 ? 0x200 | vk : (scan & 0xff) | ((KeyFlags(vk, scan, flags) & 1) << 8);
+    private static int KeyFlags(int vk, int scan, int flags) =>
+        // Hook metadata can mark right Shift extended, but neither Shift scan
+        // code has an E0 prefix. Keep down/up and cleanup on the same identity.
+        vk is 0x10 or 0xa0 or 0xa1 && scan is 0x2a or 0x36 ? flags & ~1 : flags;
     internal static Input BuildKeyInput(Packet packet)
     {
+        // Also normalize older controllers' packets at the receiver.
+        int flags = KeyFlags(packet.A, packet.B, packet.C);
         // Non-extended keypad digits/decimal share scan codes with navigation.
         // Preserve the source's resolved VK so the receiver's Num Lock state
         // cannot reinterpret a digit as End/Down/Delete (or the reverse).
-        bool keypad = (packet.C & 1) == 0 && packet.B is
+        bool keypad = (flags & 1) == 0 && packet.B is
             (>= 0x47 and <= 0x49) or (>= 0x4b and <= 0x4d) or (>= 0x4f and <= 0x53);
         bool scanCode = packet.B != 0 && !keypad;
         return new Input { Type = 1, Data = new InputUnion { Keyboard = new KeyboardInput
         { Vk = scanCode ? (ushort)0 : (ushort)packet.A, Scan = (ushort)packet.B,
-            Flags = (uint)packet.C | (scanCode ? 8u : 0u), Extra = Tag } } };
+            Flags = (uint)flags | (scanCode ? 8u : 0u), Extra = Tag } } };
     }
     internal static Input BuildMouseInput(int flags, int data) =>
         new() { Data = new InputUnion { Mouse = new MouseInput { Flags = (uint)flags, Data = unchecked((uint)data), Extra = Tag } } };

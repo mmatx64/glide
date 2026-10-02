@@ -1,5 +1,12 @@
 # Glide validation — October 2, 2026
 
+## v0.7.4: remote right Shift
+
+- User report: right Shift on the controlling keyboard does not affect remote typing; Shift+/ produces `/` and letters remain lowercase. The hook's extended metadata was forwarded directly into scan-code `SendInput`, although right Shift is scan `0x36` without an E0 prefix.
+- Shift flags are normalized at capture, physical key identity, and injection. Updated receivers accept older controllers' packets. Left/right Shift remain distinct; right Ctrl/Alt and keypad/navigation forwarding retain existing behavior. Normal key-up, Release, and disconnect cleanup use the same normalized identity even when down/up extended metadata differs.
+- Regression checks failed on the previous key identity behavior and passed with the fix. Managed self-test passed Windows `MapVirtualKeyEx` decoding and `ToUnicodeEx` translation for both Shift keys, hook flag variants, right Ctrl/Alt, `?`, `/`, `A`, and `a`. The production receiver loop passed ordered right Shift combinations, mixed down/up flags, Release, and detach cleanup with mock injection. No test typed into the user's desktop.
+- Physical acceptance pending: update the receiving PC, test right Shift+/ and right Shift+letters, then release Shift and verify ordinary typing. Repeat with left Shift, both Shift keys, and returning local/disconnecting while Shift is held.
+
 ## v0.7.3: automatic service installer during updates
 
 - The elevated updater runs the verified, downloaded package's `Install-Service.ps1 -Action Install -NoStart` after package replacement and before the lifecycle restarts the service. PowerShell runs hidden/noninteractive under the already validated enrolled administrator account. Portable-only updates do not install a service. Existing update confirmation and completion dialogs remain.

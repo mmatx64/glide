@@ -15,6 +15,7 @@ internal static class NativeTests
             if (Marshal.SizeOf<Native.Input>() != 40) throw new Exception("x64 INPUT layout is wrong.");
             if (Marshal.SizeOf<Native.MouseHook>() != 32 || Marshal.SizeOf<Native.KeyHook>() != 24) throw new Exception("Hook layout is wrong.");
             lines.Add("PASS Win32 x64 input structures");
+            KeyboardTests.Run(lines).GetAwaiter().GetResult();
             UpdateInstaller.TestPaths(directory);
             lines.Add("PASS update directory guard blocks rename while allowing atomic replacement and preserving settings");
             ServiceInstallerTests.Run(directory, lines);
