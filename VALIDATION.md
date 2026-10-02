@@ -1,5 +1,12 @@
 # Glide validation — October 2, 2026
 
+## v0.7.2: published tray controls and single-click opening
+
+- Final Release NativeAOT build passed 99 core checks, 33 native smoke checks, and seven mocked service-cleanup scenarios. Executable version is `0.7.2.0`; ProductVersion identifies compiled source `72857e54db761d0e4996401a71184d3bec310e6e`.
+- Published v0.7.2 as the latest regular GitHub release with the Windows x64 ZIP and checksum file. Uploaded asset digests match the local files. The ZIP contains the five expected files and the exact pristine source INI; existing dist settings were preserved.
+- The production updater's public latest-release lookup, SHA-256-verified download, package extraction, and pristine-settings checks passed against v0.7.2. Downloaded ZIP and executable match the local build. ZIP SHA-256: `d78b192f035670028350ff650221513aaaf5bef15b9758b674f91e342ebb7103`; EXE SHA-256: `375319c7a82a9d40f00a0e4bb97cee72c3dd932b63d324dec319f2ff16fa414c`.
+- This publication did not replace/restart the local installed service. Actual tray single-click, menu dismissal/reopening, and commands remain manual acceptance checks because preview activation through Windows automation failed. Existing two-PC idle-saver and sign-in/unlock acceptance limitations remain.
+
 ## Tray controls: local working build
 
 - Added a native right-click menu: Open Glide, connection status, Start/Pause sharing, checked Role and Screen arrangement submenus, Check for updates, About Glide, and Quit. Commands reuse existing sharing/update paths; busy state and arrangement restrictions are checked again when a command executes.
