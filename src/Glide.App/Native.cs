@@ -50,6 +50,11 @@ internal static class Native
     [DllImport("user32.dll")] internal static extern bool ShowWindow(nint w, int command);
     [DllImport("user32.dll")] internal static extern bool UpdateWindow(nint w);
     [DllImport("user32.dll")] internal static extern bool SetForegroundWindow(nint w);
+    [DllImport("user32.dll", SetLastError = true)] internal static extern nint CreatePopupMenu();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern bool AppendMenu(nint menu, uint flags, nuint id, string? text);
+    [DllImport("user32.dll")] internal static extern bool DestroyMenu(nint menu);
+    [DllImport("user32.dll")] internal static extern bool SetMenuDefaultItem(nint menu, uint item, uint byPosition);
+    [DllImport("user32.dll")] internal static extern int TrackPopupMenu(nint menu, uint flags, int x, int y, int reserved, nint window, nint rectangle);
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] internal static extern int GetMessage(out Message message, nint w, uint min, uint max);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool PeekMessage(out Message message, nint w, uint min, uint max, uint remove);
     [DllImport("user32.dll")] internal static extern bool TranslateMessage(ref Message message);

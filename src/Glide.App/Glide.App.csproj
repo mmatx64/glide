@@ -9,7 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Glide.ico</ApplicationIcon>
     <AssemblyName>Glide</AssemblyName>
-    <Version>0.7.1</Version>
+    <Version>0.7.2</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="..\Glide.Core\Glide.Core.csproj" /></ItemGroup>

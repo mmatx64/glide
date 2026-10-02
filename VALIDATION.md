@@ -1,4 +1,11 @@
-# Glide validation — October 1, 2026
+# Glide validation — October 2, 2026
+
+## Tray controls: local working build
+
+- Added a native right-click menu: Open Glide, connection status, Start/Pause sharing, checked Role and Screen arrangement submenus, Check for updates, About Glide, and Quit. Commands reuse existing sharing/update paths; busy state and arrangement restrictions are checked again when a command executes.
+- Single left-button release now opens/restores the main window and refreshes pairing policy. Double-click remains supported. The tooltip and README describe the new interaction.
+- Final Release NativeAOT build passed all 99 core checks, 33 native smoke checks, and seven mocked service-cleanup scenarios. The portable executable and ZIP were rebuilt; dist and artifacts/native executables match. Existing dist settings were preserved.
+- Added an isolated `--preview-tray` option for inspecting the actual menu without networking or saved credentials. Live menu interaction was not verified: Windows automation could inspect the preview but failed to activate it. Preview processes were closed. The installed/running service was not replaced or restarted; actual tray single-click, menu dismissal/reopening, and commands still need manual acceptance using the new build.
 
 ## v0.7.1: actual idle screensaver desktop wake and input replay
 

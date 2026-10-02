@@ -120,8 +120,8 @@ internal sealed partial class MainWindow : IDisposable
         SwitchRole(controller, false);
         Layout();
         tray = new NotifyIcon { Size = (uint)Marshal.SizeOf<NotifyIcon>(), Window = window, Id = 1,
-            Flags = 1 | 2 | 4, Callback = WM_APP + 1, Icon = icon, Tip = "Glide · double-click to open", Info = "", Title = "" };
-        if (!Diagnostic) trayAdded = Shell_NotifyIcon(0, ref tray);
+            Flags = 1 | 2 | 4, Callback = WM_APP + 1, Icon = icon, Tip = "Glide · click to open · right-click for options", Info = "", Title = "" };
+        if (!Diagnostic || args.Contains("--preview-tray")) trayAdded = Shell_NotifyIcon(0, ref tray);
         taskbarCreated = RegisterWindowMessage("TaskbarCreated");
         SetTimer(window, 1, 500, 0);
         ShowWindow(window, service is not null && settings.PairingCode.Length > 0 ? 0 : 5); UpdateWindow(window);
@@ -241,6 +241,7 @@ internal sealed partial class MainWindow : IDisposable
     {
         try
         {
+        if (HandleTrayCommand(id)) return;
         if (uiBusy && id is not (ApprovePair or RejectPair or Hide or Quit)) return;
         switch (id)
         {
@@ -332,7 +333,7 @@ internal sealed partial class MainWindow : IDisposable
                 case 0x138: SetTextColor((nint)p, Rgb((int)Ink)); SetBkColor((nint)p, Rgb((int)Field)); return fieldBrush;
                 case WM_TIMER:
                     if (service?.Stopping == true) { DestroyWindow(w); return 0; }
-                    if (service?.ShowRequested == true) { ShowWindow(w, 9); SetForegroundWindow(w); UpdatePairingPolicy(); }
+                    if (service?.ShowRequested == true) ShowMainWindow();
                     if (p == 2 && previewPath is not null) { KillTimer(w, 2); Capture(previewPath); DestroyWindow(w); }
                     else if (p == 3 && profilePath is not null)
                     {
@@ -348,7 +349,9 @@ internal sealed partial class MainWindow : IDisposable
                     var rect = Marshal.PtrToStructure<Rect>(l); MoveWindow(w, rect.Left, rect.Top, rect.Width, rect.Height, false);
                     FitWindow((p & 65535) / 96.0); if (controls.Count > 0) Layout(); InvalidateRect(w, 0, false); return 0;
                 case WM_APP + 1:
-                    if ((uint)l is 0x203 or 0x205) { ShowWindow(w, 9); SetForegroundWindow(w); } return 0;
+                    HandleTrayNotification((uint)l); return 0;
+                case 0x7b when Diagnostic && args.Contains("--preview-tray"):
+                    ShowTrayMenu(); return 0; // Expose the real tray menu for isolated UI previews.
                 case WM_CLOSE: HideWindow(); return 0;
                 case WM_DESTROY:
                     closed = true; KillTimer(w, 1); windowLifetime.Cancel(); StopSharing();
