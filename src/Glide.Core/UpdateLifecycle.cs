@@ -9,13 +9,14 @@ public interface IUpdateService
 
 public static class UpdateLifecycle
 {
-    public static void Apply(UpdateTransaction transaction, IUpdateService service)
+    public static void Apply(UpdateTransaction transaction, IUpdateService service, Action? configureService = null)
     {
         bool wasRunning = service.Running, stopping = false;
         try
         {
             if (wasRunning) { stopping = true; service.Stop(); }
             transaction.Apply();
+            configureService?.Invoke();
             if (wasRunning) service.Start();
             transaction.Commit();
         }

@@ -92,19 +92,70 @@ internal static class UpdateTests
                 transaction.Rollback();
             }
             check(File.ReadAllText(Path.Combine(portable, "Glide.exe")) == "old Glide.exe", "partial-install failure restores the already replaced executable");
+            var setupService = new FixtureService(true);
+            int setups = 0;
+            using (var transaction = new UpdateTransaction(package, [portable, service]))
+            {
+                bool failed = false;
+                try
+                {
+                    UpdateLifecycle.Apply(transaction, setupService, () =>
+                    {
+                        setups++;
+                        check(!setupService.Running && File.ReadAllText(Path.Combine(service, "Install-Service.ps1")) == "new Install-Service.ps1",
+                            "service setup runs after verified file replacement and before service restart");
+                        throw new IOException("Fixture service setup failed.");
+                    });
+                }
+                catch (IOException) { failed = true; }
+                check(failed && setups == 1 && setupService.Running && setupService.Stops == 1 && setupService.Starts == 1
+                    && new[] { portable, service }.All(folder => ReleaseUpdate.PackageFiles.All(name => File.ReadAllText(Path.Combine(folder, name)) == "old " + name)),
+                    "installer failure rolls back both copies and scripts, preserves settings, and restarts the previous service");
+            }
+            var setupStoppedService = new FixtureService(false);
+            using (var transaction = new UpdateTransaction(package, [portable]))
+            {
+                UpdateLifecycle.Apply(transaction, setupStoppedService, () =>
+                {
+                    setups++;
+                    check(!setupStoppedService.Running, "service setup also runs for an intentionally stopped service");
+                });
+            }
+            check(setups == 2 && !setupStoppedService.Running && setupStoppedService.Starts == 0 && setupStoppedService.Stops == 0,
+                "successful setup keeps an intentionally stopped service stopped");
+            // Restore the fixture for the existing startup-failure regression.
+            foreach (string name in ReleaseUpdate.PackageFiles) File.WriteAllText(Path.Combine(portable, name), "old " + name);
+            var failedStoppedSetup = new FixtureService(false);
+            using (var transaction = new UpdateTransaction(package, [portable]))
+            {
+                bool failed = false;
+                try { UpdateLifecycle.Apply(transaction, failedStoppedSetup, () => throw new IOException("Fixture stopped-service setup failed.")); }
+                catch (IOException) { failed = true; }
+                check(failed && !failedStoppedSetup.Running && failedStoppedSetup.Starts == 0 && failedStoppedSetup.Stops == 0
+                    && File.ReadAllText(Path.Combine(portable, "Glide.exe")) == "old Glide.exe",
+                    "installer failure restores files without starting an intentionally stopped service");
+            }
             var failedStart = new FixtureService(true, true);
             using (var transaction = new UpdateTransaction(package, [portable]))
             {
                 bool failed = false;
-                try { UpdateLifecycle.Apply(transaction, failedStart); } catch (IOException) { failed = true; }
-                check(failed && failedStart.Running && failedStart.Starts == 2 && failedStart.Stops == 2
+                bool setupCompleted = false;
+                try { UpdateLifecycle.Apply(transaction, failedStart, () => setupCompleted = true); } catch (IOException) { failed = true; }
+                check(failed && setupCompleted && failedStart.Running && failedStart.Starts == 2 && failedStart.Stops == 2
                     && File.ReadAllText(Path.Combine(portable, "Glide.exe")) == "old Glide.exe", "failed service start stops the new instance, rolls files back, and restarts the old service");
             }
             var stoppedService = new FixtureService(false);
             using (var transaction = new UpdateTransaction(package, [portable])) { UpdateLifecycle.Apply(transaction, stoppedService); }
             check(!stoppedService.Running && stoppedService.Starts == 0 && stoppedService.Stops == 0, "update preserves an intentionally stopped service");
             var runningService = new FixtureService(true);
-            using (var transaction = new UpdateTransaction(package, [portable])) { UpdateLifecycle.Apply(transaction, runningService); }
+            using (var transaction = new UpdateTransaction(package, [portable]))
+            {
+                UpdateLifecycle.Apply(transaction, runningService, () =>
+                {
+                    check(!runningService.Running && runningService.Starts == 0,
+                        "successful service setup completes while stopped, before the only restart");
+                });
+            }
             check(runningService.Running && runningService.Starts == 1 && runningService.Stops == 1, "successful update stops and restarts a running service once");
             using (var transaction = new UpdateTransaction(package, [portable])) { transaction.Apply(); transaction.Commit(); }
             check(File.ReadAllText(Path.Combine(portable, "Glide.exe")) == "new Glide.exe" && Directory.GetFiles(portable, "*.bak").Length == 0

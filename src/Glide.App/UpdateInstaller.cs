@@ -154,7 +154,9 @@ internal static class UpdateInstaller
             if (parent.HasExited) throw new IOException("The requesting Glide app closed before the update was ready.");
             ready.Set();
             if (!parent.WaitForExit(15000)) throw new IOException("Glide did not exit within 15 seconds. No installed files were replaced.");
-            UpdateLifecycle.Apply(transaction, service);
+            // Use the verified release's installer while the service is stopped.
+            // The helper already has the enrolled user's administrator token.
+            UpdateLifecycle.Apply(transaction, service, service.Exists ? () => ServiceInstaller.Run(package) : null);
             Native.MessageBox(0, $"Glide was updated to {release.Tag}. Your settings and pairing were preserved.", "Glide update complete", 0x40);
             if (wasRunning) Process.Start(new ProcessStartInfo(ServiceHost.Executable, "--open-service") { UseShellExecute = true });
             else if (!serviceTarget) RestartPortable(target);

@@ -1,5 +1,12 @@
 # Glide validation — October 2, 2026
 
+## v0.7.3: automatic service installer during updates
+
+- The elevated updater runs the verified, downloaded package's `Install-Service.ps1 -Action Install -NoStart` after package replacement and before the lifecycle restarts the service. PowerShell runs hidden/noninteractive under the already validated enrolled administrator account. Portable-only updates do not install a service. Existing update confirmation and completion dialogs remain.
+- Installer output is drained concurrently with bounded diagnostics and a 90-second deadline. Failure/timeout propagates into package-file rollback and restoration of the previous service running/stopped state. Installer changes to firewall rules, ACLs, shortcuts, service configuration, or enrollment are not transactionally reverted; this is documented in README.
+- Managed checks passed for setup ordering, running-service failure rollback of both installed copies and scripts, successful stopped-service setup, stopped-service failure rollback, and service-start failure after setup. Native fixture scripts passed argument/path-with-spaces, noninteractive input, large concurrent output, nonzero exit, and forced timeout termination without touching the installed service, SCM or firewall.
+- Existing updaters cannot acquire this behavior during their own replacement: install v0.7.3 once, then subsequent updates use its new installer step. Actual full installed-service setup through the updater remains a manual acceptance check; final release/public download verification is recorded below when complete.
+
 ## v0.7.2: published tray controls and single-click opening
 
 - Final Release NativeAOT build passed 99 core checks, 33 native smoke checks, and seven mocked service-cleanup scenarios. Executable version is `0.7.2.0`; ProductVersion identifies compiled source `72857e54db761d0e4996401a71184d3bec310e6e`.

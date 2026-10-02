@@ -17,6 +17,7 @@ internal static class NativeTests
             lines.Add("PASS Win32 x64 input structures");
             UpdateInstaller.TestPaths(directory);
             lines.Add("PASS update directory guard blocks rename while allowing atomic replacement and preserving settings");
+            ServiceInstallerTests.Run(directory, lines);
             if (!Environment.ProcessPath!.EndsWith("dotnet.exe", StringComparison.OrdinalIgnoreCase))
             {
                 UpdateInstaller.TestJobLifetime(directory);
